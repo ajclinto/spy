@@ -15,7 +15,7 @@
 // Compile time parameters (could be made settings)
 static const int XPADDING = 1;
 const bool RELAXCASE = true;
-const bool HLSEARCH = false;
+const bool HLSEARCH = true;
 
 static int SYSmax(int a, int b) { return a > b ? a : b; }
 static int SYSmin(int a, int b) { return a < b ? a : b; }
@@ -62,22 +62,23 @@ struct DIRINFO {
 		return strcasecmp(myname.c_str(), rhs.myname.c_str()) < 0;
 	}
 
-	bool match(const char *search) const
+	bool match(const char *search) const { int off; return match(search, off); }
+	bool match(const char *search, int &off) const
 	{
 		if (!search || !*search)
 			return false;
 
 		if (RELAXCASE)
 		{
-			if (ci_find_substr(myname, search) >= 0)
-				return true;
+			off = ci_find_substr(myname, search);
 		}
 		else
 		{
-			if (myname.find(search) != std::string::npos)
-				return true;
+			off = myname.find(search);
+			if (off == std::string::npos)
+				off = -1;
 		}
-		return false;
+		return off >= 0;
 	}
 
 	std::string myname;
@@ -166,6 +167,12 @@ static void rebuild()
 	std::sort(thefiles.begin(), thefiles.end());
 
 	layout(thefiles, LINES-3, COLS);
+
+	if (thecurfile >= thefiles.size())
+	{
+		thecurfile = thefiles.size()-1;
+		filetopage();
+	}
 
 	closedir(dp);
 }
@@ -274,6 +281,27 @@ static void lastfile()
 	filetopage();
 }
 
+static void set_attrs(char type, bool curfile)
+{
+	if (curfile)
+	{
+		attrset(COLOR_PAIR(0));
+		attron(A_REVERSE);
+	}
+	else
+	{
+		switch (type)
+		{
+			case DT_DIR:
+				attrset(COLOR_PAIR(3));
+				break;
+			default:
+				attrset(COLOR_PAIR(0));
+				break;
+		}
+	}
+}
+
 static void drawfile(int file, const char *incsearch)
 {
 	int page, x, y;
@@ -283,31 +311,40 @@ static void drawfile(int file, const char *incsearch)
 
 	const DIRINFO &dir = thefiles[file];
 
+	set_attrs(dir.mytype, false);
 	switch (dir.mytype)
 	{
 		case DT_DIR:
-			attrset(COLOR_PAIR(3));
 			move(2+y, xoff);
 			addch('*');
 			break;
-		default:
-			attrset(COLOR_PAIR(0));
-			break;
-	}
-
-	if (file == thecurfile)
-	{
-		attrset(COLOR_PAIR(0));
-		attron(A_REVERSE);
-	}
-	else if (HLSEARCH && dir.match(incsearch))
-	{
-		attrset(COLOR_PAIR(6));
-		attron(A_REVERSE);
 	}
 
 	move(2+y, xoff+2);
-	addstr(dir.myname.c_str());
+
+	int off;
+	if (dir.match(incsearch, off) && (HLSEARCH || file == thecurfile))
+	{
+		int hlstart = off;
+		int hlend = off + strlen(incsearch);
+
+		set_attrs(dir.mytype, file == thecurfile);
+
+		addnstr(dir.myname.c_str(), hlstart);
+
+		attrset(COLOR_PAIR(6));
+		attron(A_REVERSE);
+		addnstr(dir.myname.c_str() + hlstart, hlend - hlstart);
+
+		set_attrs(dir.mytype, file == thecurfile);
+
+		addnstr(dir.myname.c_str() + hlend, dir.myname.length()-hlend);
+	}
+	else
+	{
+		set_attrs(dir.mytype, file == thecurfile);
+		addstr(dir.myname.c_str());
+	}
 
 	switch (dir.mytype)
 	{
