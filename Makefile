@@ -6,7 +6,7 @@
 
 CC = g++
 
-CFLAGS = -O3
+CFLAGS = -O3 -g
 CFLAGS += -I/usr/include
 
 #LDFLAGS += -lpthread -ldl -lm
@@ -20,9 +20,12 @@ srcs = \
 
 objs = $(srcs:.cpp=.o)
 
+%.o: %.cpp
+	$(CC) $(CFLAGS) -c $<
+
 spy: $(objs)
-	$(CC) $(CFLAGS) $(srcs) $(LDFLAGS) -o spy
+	$(CC) $(CFLAGS) $(objs) $(LDFLAGS) -o spy
 
 clean:
-	rm *.o *.d spy
+	rm -f *.o *.d spy
 
