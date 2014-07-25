@@ -6,6 +6,8 @@
 #include <string.h>
 #include <pwd.h>
 #include <readline/readline.h>
+#include <readline/history.h>
+#include <sys/wait.h>
 
 #include <string>
 #include <vector>
@@ -15,10 +17,31 @@
 // Compile time parameters (could be made settings)
 static const int XPADDING = 1;
 const bool RELAXCASE = true;
-const bool HLSEARCH = true;
+const bool HLSEARCH = false;
 
-static int SYSmax(int a, int b) { return a > b ? a : b; }
-static int SYSmin(int a, int b) { return a < b ? a : b; }
+// Environment
+const char *s_shell = getenv("SHELL");
+const char *s_home = getenv("HOME");
+
+// History
+static HISTORY_STATE s_jump_history;
+static HISTORY_STATE s_search_history;
+static HISTORY_STATE s_execute_history;
+
+static inline int SYSmax(int a, int b) { return a > b ? a : b; }
+static inline int SYSmin(int a, int b) { return a < b ? a : b; }
+
+static inline void replaceall(std::string &str,
+		const std::string& from,
+		const std::string& to)
+{
+	size_t start_pos = 0;
+	while((start_pos = str.find(from, start_pos)) != std::string::npos)
+	{
+		str.replace(start_pos, from.length(), to);
+		start_pos += to.length();
+	}
+}
 
 static void finish(int sig)
 {
@@ -29,7 +52,7 @@ static void finish(int sig)
 
 struct ci_equal {
 	bool operator()(char ch1, char ch2) {
-		return std::toupper(ch1) == std::toupper(ch2);
+		return std::tolower(ch1) == std::tolower(ch2);
 	}
 };
 
@@ -170,7 +193,7 @@ static void rebuild()
 
 	if (thecurfile >= thefiles.size())
 	{
-		thecurfile = thefiles.size()-1;
+		thecurfile = thefiles.size() ? thefiles.size()-1 : 0;
 		filetopage();
 	}
 
@@ -232,9 +255,12 @@ static void down()
 	pagetofile();
 }
 
-static void spy_chdir(const char *dir)
+static void jump_dir(const char *dir)
 {
-	if (chdir(dir))
+	std::string expanded = dir;
+	replaceall(expanded, "~", s_home);
+
+	if (chdir(expanded.c_str()))
 	{
 		perror("chdir");
 	}
@@ -246,11 +272,11 @@ static void spy_chdir(const char *dir)
 
 static void dirup()
 {
-	spy_chdir("..");
+	jump_dir("..");
 }
 static void dirdown()
 {
-	spy_chdir(thefiles[thecurfile].myname.c_str());
+	jump_dir(thefiles[thecurfile].myname.c_str());
 }
 
 static void pageup()
@@ -277,7 +303,7 @@ static void pagedown()
 
 static void lastfile()
 {
-	thecurfile = thefiles.size()-1;
+	thecurfile = thefiles.size() ? thefiles.size()-1 : 0;
 	filetopage();
 }
 
@@ -292,12 +318,14 @@ static void set_attrs(char type, bool curfile)
 	{
 		switch (type)
 		{
-			case DT_DIR:
-				attrset(COLOR_PAIR(3));
-				break;
-			default:
-				attrset(COLOR_PAIR(0));
-				break;
+			case DT_DIR: attrset(COLOR_PAIR(3)); break;
+			case DT_FIFO: attrset(COLOR_PAIR(1)); break;
+			case DT_CHR: attrset(COLOR_PAIR(2)); break;
+			case DT_BLK: attrset(COLOR_PAIR(4)); break;
+			case DT_LNK: attrset(COLOR_PAIR(6)); break;
+			case DT_SOCK: attrset(COLOR_PAIR(5)); break;
+			case DT_WHT: attrset(COLOR_PAIR(5)); break;
+			default: attrset(COLOR_PAIR(0)); break;
 		}
 	}
 }
@@ -374,22 +402,30 @@ static void draw(const char *incsearch = 0)
 	move(0, 0);
 	printw("%s@%s %s", username, hostname, thecwd);
 
-	if (thepages > 1)
+	if (thefiles.size())
+	{
+		if (thepages > 1)
+		{
+			move(1, 0);
+			printw("Page %d/%d", thecurpage+1, thepages);
+		}
+
+		int file = thecurpage * thecols * therows;
+		int maxfile = SYSmin((thecurpage+1) * thecols * therows, thefiles.size());
+		for (; file < maxfile; file++)
+		{
+			drawfile(file, incsearch);
+		}
+
+		// Draw the current file a second time to leave the cursor in the
+		// expected place
+		drawfile(thecurfile, incsearch);
+	}
+	else
 	{
 		move(1, 0);
-		printw("Page %d/%d", thecurpage+1, thepages);
+		printw("<empty>\n");
 	}
-
-	int file = thecurpage * thecols * therows;
-	int maxfile = SYSmin((thecurpage+1) * thecols * therows, thefiles.size());
-	for (; file < maxfile; file++)
-	{
-		drawfile(file, incsearch);
-	}
-
-	// Draw the current file a second time to leave the cursor in the
-	// expected place
-	drawfile(thecurfile, incsearch);
 }
 
 static void quit()
@@ -405,11 +441,17 @@ int rl_getc(FILE *fp)
 		case KEY_BACKSPACE:
 			key = (*rl_line_buffer) ? RUBOUT : EOF;
 			break;
+		case KEY_UP:
+			key = CTRL('p');
+			break;
+		case KEY_DOWN:
+			key = CTRL('n');
+			break;
 	}
 	return key;
 }
 
-static const char *lastjump = "/home/andrew";
+static const char *lastjump = "~";
 
 void jump_rl_display()
 {
@@ -434,6 +476,8 @@ static void jump()
 	rl_getc_function = rl_getc;
 	rl_redisplay_function = jump_rl_display;
 
+	history_set_history_state(&s_jump_history);
+
 	// Read input
 	char *input = readline("");
 
@@ -442,7 +486,10 @@ static void jump()
 
 	const char *dir = *input ? input : lastjump;
 
-	spy_chdir(dir);
+	add_history(dir);
+	s_jump_history = *history_get_history_state();
+
+	jump_dir(dir);
 
 	free(input);
 }
@@ -508,11 +555,142 @@ static void search()
 	rl_getc_function = rl_getc;
 	rl_redisplay_function = search_rl_display;
 
+	history_set_history_state(&s_search_history);
+
 	// Read input
 	thesearch = readline("");
 
+	if (thesearch && *thesearch)
+	{
+		add_history(thesearch);
+		s_search_history = *history_get_history_state();
+	}
+
 	searchnext();
 }
+
+void execute_rl_display()
+{
+	draw();
+
+	attrset(A_NORMAL);
+
+	// Print the prompt
+	move(LINES-1, 0);
+	addstr("!");
+
+	addstr(rl_line_buffer);
+
+	refresh();
+}
+
+static void execute_command(const char *command)
+{
+	// Temporarily end curses mode for command output
+	endwin();
+
+	int child = fork();
+	if (child == -1)
+	{
+		perror("fork failed");
+	}
+	else if (child == 0)
+	{
+		const char		*delim = " \t";
+		const char      *args[256];
+		int				 va_args = 0;
+
+		// Expand special characters
+		std::string expanded = command;
+
+		// TODO: There should be support for escaping %
+		if (thecurfile < thefiles.size())
+			replaceall(expanded, "%", thefiles[thecurfile].myname);
+		replaceall(expanded, "~", s_home);
+
+		// Execute commands in a subshell
+		args[va_args++] = s_shell ? s_shell : "/bin/bash";
+		args[va_args++] = "-c";
+		args[va_args++] = expanded.c_str();
+		args[va_args++] = 0;
+
+		if (execvp(args[0], (char * const *)args) == -1)
+		{
+			perror("exec failed");
+			exit(1);
+		}
+
+		// Unreachable
+	}
+
+	int status;
+	waitpid(child, &status, 0);
+
+	// Wait for any key
+	// If the command produced no output, we shouldn't bother with this
+	getch();
+}
+
+static void execute()
+{
+	// Configure readline
+	rl_getc_function = rl_getc;
+	rl_redisplay_function = execute_rl_display;
+
+	history_set_history_state(&s_execute_history);
+
+	// Read input
+	char *command = readline("");
+
+	if (!command)
+		return;
+
+	if (!*command)
+	{
+		free(command);
+		return;
+	}
+
+	add_history(command);
+	s_execute_history = *history_get_history_state();
+
+	execute_command(command);
+
+	free(command);
+}
+
+typedef void(*VOIDFN)();
+typedef void(*STRFN)(const char *);
+
+class CALLBACK {
+public:
+	CALLBACK()
+		: myvfn(0)
+		, mysfn(0)
+		{}
+	CALLBACK(VOIDFN fn)
+		: myvfn(fn)
+		, mysfn(0)
+		{}
+	CALLBACK(STRFN fn, const char *str)
+		: myvfn(0)
+		, mysfn(fn)
+		, mystr(str)
+		{}
+
+	void operator()() const
+	{
+		if (mysfn)
+			mysfn(mystr.c_str());
+		else
+			myvfn();
+	}
+
+private:
+	VOIDFN		myvfn;
+	STRFN		mysfn;
+	std::string	mystr;
+};
 
 int main(int argc, char *argv[])
 {
@@ -530,10 +708,10 @@ int main(int argc, char *argv[])
 	//cbreak();       /* take input chars one at a time, no wait for \n */
 	//echo();         /* echo input - in color */
 
-	// TODO: How to allow scrollback?
-	scrollok(stdscr, FALSE);
-	scrollok(curscr, FALSE);
-	scrollok(newscr, FALSE);
+	// Initialize readline
+	s_jump_history = *history_get_history_state();
+	s_search_history = *history_get_history_state();
+	s_execute_history = *history_get_history_state();
 
 	if (has_colors())
 	{
@@ -550,7 +728,6 @@ int main(int argc, char *argv[])
 		init_pair(7, -1, COLOR_MAGENTA);
 	}
 
-	typedef void(*CALLBACK)();
 	std::map<int, CALLBACK> commands;
 
 	commands['j'] = commands[KEY_DOWN] = down;
@@ -572,8 +749,19 @@ int main(int argc, char *argv[])
 	commands['/'] = search;
 	commands['n'] = searchnext;
 
+	commands['!'] = commands[':'] = commands[';'] = execute;
+
+	commands['v'] = CALLBACK(execute_command, "$EDITOR %");
+	commands['L'] = CALLBACK(execute_command, "ls -l %");
+
+	// These should probably be sourced from .spyrc
+	commands['f'] = CALLBACK(execute_command, "file %");
+	commands['m'] = CALLBACK(execute_command, "make -j4");
+
+	commands['1'] = CALLBACK(jump_dir, "~/projects/spy");
+
 	rebuild();
-	for (;;)
+	while (true)
 	{
 		draw();
 		refresh();
