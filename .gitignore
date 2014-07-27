@@ -20,3 +20,4 @@
 *.out
 *.app
 spy
+spyrc_defaults.h
