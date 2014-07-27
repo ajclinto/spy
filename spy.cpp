@@ -43,6 +43,22 @@ static inline void replaceall(std::string &str,
 	}
 }
 
+static inline void replaceall_non_escaped(
+		std::string &str,
+		char from,
+		const std::string& to)
+{
+	size_t start_pos = 0;
+	while((start_pos = str.find(from, start_pos)) != std::string::npos)
+	{
+		if (start_pos > 0 && str[start_pos-1] != '\\')
+		{
+			str.replace(start_pos, 1, to);
+			start_pos += to.length();
+		}
+	}
+}
+
 static void finish(int sig)
 {
 	endwin();
@@ -174,17 +190,20 @@ static void rebuild()
 
 	thefiles.clear();
 
-	struct dirent *entry;
+	struct dirent entry;
+	struct dirent *result;
 	int y = 0;
-	while((entry = readdir(dp)))
+	readdir_r(dp, &entry, &result);
+	while(result)
 	{
-		if (strcmp(entry->d_name, ".") &&
-			strcmp(entry->d_name, ".."))
+		if (strcmp(entry.d_name, ".") &&
+			strcmp(entry.d_name, ".."))
 		{
 			thefiles.push_back(DIRINFO());
-			thefiles.back().myname = entry->d_name;
-			thefiles.back().mytype = entry->d_type;
+			thefiles.back().myname = entry.d_name;
+			thefiles.back().mytype = entry.d_type;
 		}
+		readdir_r(dp, &entry, &result);
 	}
 
 	std::sort(thefiles.begin(), thefiles.end());
@@ -258,7 +277,7 @@ static void down()
 static void jump_dir(const char *dir)
 {
 	std::string expanded = dir;
-	replaceall(expanded, "~", s_home);
+	replaceall_non_escaped(expanded, '~', s_home);
 
 	if (chdir(expanded.c_str()))
 	{
@@ -433,66 +452,35 @@ static void quit()
 	finish(0);
 }
 
-int rl_getc(FILE *fp)
+int spy_rl_getc(FILE *fp)
 {
 	int key = getch();
 	switch (key)
 	{
+		case ESC:
+			*rl_line_buffer = '\0';
+			key = EOF;
+			break;
 		case KEY_BACKSPACE:
-			key = (*rl_line_buffer) ? RUBOUT : EOF;
+			if (!rl_point)
+			{
+				*rl_line_buffer = '\0';
+				key = EOF;
+			}
+			else
+			{
+				key = RUBOUT;
+			}
 			break;
-		case KEY_UP:
-			key = CTRL('p');
-			break;
-		case KEY_DOWN:
-			key = CTRL('n');
-			break;
+		case KEY_UP: key = CTRL('p'); break;
+		case KEY_DOWN: key = CTRL('n'); break;
+		case KEY_LEFT: key = CTRL('b'); break;
+		case KEY_RIGHT: key = CTRL('f'); break;
 	}
 	return key;
 }
 
-static const char *lastjump = "~";
-
-void jump_rl_display()
-{
-	draw();
-
-	attrset(A_NORMAL);
-
-	// Print the prompt
-	move(LINES-1, 0);
-	addstr("Jump:  (");
-	addstr(lastjump);
-	addstr(") ");
-
-	addstr(rl_line_buffer);
-
-	refresh();
-}
-
-static void jump()
-{
-	// Configure readline
-	rl_getc_function = rl_getc;
-	rl_redisplay_function = jump_rl_display;
-
-	history_set_history_state(&s_jump_history);
-
-	// Read input
-	char *input = readline("");
-
-	if (!input)
-		return;
-
-	const char *dir = *input ? input : lastjump;
-
-	add_history(dir);
-	s_jump_history = *history_get_history_state();
-
-	jump_dir(dir);
-
-	free(input);
-}
+static std::string lastjump = "~";
 
 static int nextfile(int file) { return file < thefiles.size()-1 ? file+1 : 0; }
 
@@ -516,8 +504,16 @@ static void searchnext()
 	}
 }
 
-void search_rl_display()
+enum RLTYPE {
+	JUMP,
+	SEARCH,
+	EXECUTE
+};
+
+template <RLTYPE TYPE>
+void spy_rl_display()
 {
+	if (TYPE == SEARCH)
 	{
 		// Temporarily replace the current file to show what was found
 		int prevfile = thecurfile;
@@ -531,16 +527,65 @@ void search_rl_display()
 		thecurfile = prevfile;
 		filetopage();
 	}
+	else
+	{
+		draw();
+	}
 
 	attrset(A_NORMAL);
 
 	// Print the prompt
 	move(LINES-1, 0);
-	addstr("/");
+	if (TYPE == JUMP)
+	{
+		addstr("Jump:  (");
+		addstr(lastjump.c_str());
+		addstr(") ");
+	}
+	else if (TYPE == SEARCH)
+	{
+		addstr("/");
+	}
+	else if (TYPE == EXECUTE)
+	{
+		addstr("!");
+	}
+
+	int off = getcurx(stdscr);
 
 	addstr(rl_line_buffer);
 
+	// Move to the cursor position
+	move(LINES-1, off + rl_point);
+
 	refresh();
+}
+
+static void jump()
+{
+	// Configure readline
+	rl_getc_function = spy_rl_getc;
+	rl_redisplay_function = spy_rl_display<JUMP>;
+
+	history_set_history_state(&s_jump_history);
+
+	// Read input
+	char *input = readline("");
+
+	if (!input)
+		return;
+
+	std::string dir = *input ? input : lastjump.c_str();
+
+	add_history(dir.c_str());
+	s_jump_history = *history_get_history_state();
+
+	// Store the current directory
+	lastjump = thecwd;
+
+	jump_dir(dir.c_str());
+
+	free(input);
 }
 
 static void search()
@@ -552,8 +597,8 @@ static void search()
 	}
 
 	// Configure readline
-	rl_getc_function = rl_getc;
-	rl_redisplay_function = search_rl_display;
+	rl_getc_function = spy_rl_getc;
+	rl_redisplay_function = spy_rl_display<SEARCH>;
 
 	history_set_history_state(&s_search_history);
 
@@ -567,21 +612,6 @@ static void search()
 	}
 
 	searchnext();
-}
-
-void execute_rl_display()
-{
-	draw();
-
-	attrset(A_NORMAL);
-
-	// Print the prompt
-	move(LINES-1, 0);
-	addstr("!");
-
-	addstr(rl_line_buffer);
-
-	refresh();
 }
 
 static void execute_command(const char *command)
@@ -603,10 +633,9 @@ static void execute_command(const char *command)
 		// Expand special characters
 		std::string expanded = command;
 
-		// TODO: There should be support for escaping %
 		if (thecurfile < thefiles.size())
-			replaceall(expanded, "%", thefiles[thecurfile].myname);
-		replaceall(expanded, "~", s_home);
+			replaceall_non_escaped(expanded, '%', thefiles[thecurfile].myname);
+		replaceall_non_escaped(expanded, '~', s_home);
 
 		// Execute commands in a subshell
 		args[va_args++] = s_shell ? s_shell : "/bin/bash";
@@ -625,17 +654,13 @@ static void execute_command(const char *command)
 
 	int status;
 	waitpid(child, &status, 0);
-
-	// Wait for any key
-	// If the command produced no output, we shouldn't bother with this
-	getch();
 }
 
 static void execute()
 {
 	// Configure readline
-	rl_getc_function = rl_getc;
-	rl_redisplay_function = execute_rl_display;
+	rl_getc_function = spy_rl_getc;
+	rl_redisplay_function = spy_rl_display<EXECUTE>;
 
 	history_set_history_state(&s_execute_history);
 
@@ -707,6 +732,8 @@ int main(int argc, char *argv[])
 	//nonl();         /* tell curses not to do NL->CR/NL on output */
 	//cbreak();       /* take input chars one at a time, no wait for \n */
 	//echo();         /* echo input - in color */
+
+	ESCDELAY = 0;
 
 	// Initialize readline
 	s_jump_history = *history_get_history_state();
