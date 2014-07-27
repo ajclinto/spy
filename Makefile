@@ -13,6 +13,11 @@ all: spy
 srcs = \
 	   spy.cpp
 
+spyrc_defaults.h: spyrc_defaults
+	xxd -i $< $@
+
+spy.o: spyrc_defaults.h
+
 objs = $(srcs:.cpp=.o)
 
 %.o: %.cpp Makefile
@@ -22,5 +27,5 @@ spy: $(objs)
 	$(CC) $(CFLAGS) $(objs) $(LDFLAGS) -o spy
 
 clean:
-	rm -f *.o *.d spy
+	rm -f *.o *.d spyrc_defaults.h spy
 

@@ -1,0 +1,35 @@
+map j down
+map k up
+map h left
+map l right
+
+map KEY_DOWN down
+map KEY_UP up
+map KEY_LEFT left
+map KEY_RIGHT right
+
+map d display
+map u climb
+
+map r pagedown
+map t pageup
+map KEY_NPAGE pagedown
+map KEY_PPAGE pageup
+
+map G lastfile
+
+map q quit
+
+map g jump
+
+map / search
+map n next
+
+map ! unix_cmd
+map : unix_cmd
+map ; unix_cmd
+
+map v unix $EDITOR %
+map L unix ls -l %
+
+map " loadrc
