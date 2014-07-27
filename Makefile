@@ -1,16 +1,11 @@
-# Intel compiler options
-#CC = icc
-#CFLAGS = -O3 -ipo -funroll-loops -fomit-frame-pointer
-
-# GCC compiler options
-
 CC = g++
 
-CFLAGS = -O3 -g
-CFLAGS += -I/usr/include
+CFLAGS = -g -O3 -std=c++0x
 
-#LDFLAGS += -lpthread -ldl -lm
 LDFLAGS += -lncurses -lreadline
+
+# For -static (busted)
+#LDFLAGS += -lncurses -lreadline -ltinfo -lgpm
 
 all: spy
 	
@@ -20,7 +15,7 @@ srcs = \
 
 objs = $(srcs:.cpp=.o)
 
-%.o: %.cpp
+%.o: %.cpp Makefile
 	$(CC) $(CFLAGS) -c $<
 
 spy: $(objs)
