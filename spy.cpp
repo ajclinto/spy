@@ -6,6 +6,7 @@
 #include <string.h>
 #include <assert.h>
 #include <fnmatch.h>
+#include <wordexp.h>
 #include <pwd.h>
 #include <readline/readline.h>
 #include <readline/history.h>
@@ -354,8 +355,20 @@ static void down()
 
 static void jump_dir(const char *dir)
 {
-	std::string expanded = dir;
-	replaceall_non_escaped(expanded, '~', s_home);
+	wordexp_t p;
+	wordexp(dir, &p, 0);
+
+	// Use the first valid expansion
+	std::string expanded;
+	for (int i = 0; i < p.we_wordc; i++)
+	{
+		if (p.we_wordv[i])
+		{
+			expanded = p.we_wordv[i];
+		}
+	}
+
+	wordfree(&p);
 
 	if (chdir(expanded.c_str()))
 	{
@@ -726,7 +739,6 @@ static void execute_command(const char *command)
 
 		if (thecurfile < thefiles.size())
 			replaceall_non_escaped(expanded, '%', thefiles[thecurfile].myname);
-		replaceall_non_escaped(expanded, '~', s_home);
 
 		// Execute commands in a subshell
 		args[va_args++] = s_shell ? s_shell : "/bin/bash";
