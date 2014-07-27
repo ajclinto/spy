@@ -4,15 +4,23 @@
 #include <dirent.h>
 #include <unistd.h>
 #include <string.h>
+#include <assert.h>
+#include <fnmatch.h>
 #include <pwd.h>
 #include <readline/readline.h>
 #include <readline/history.h>
 #include <sys/wait.h>
+#include <sys/stat.h>
 
 #include <string>
 #include <vector>
 #include <map>
 #include <algorithm>
+#include <fstream>
+#include <sstream>
+#include <iostream>
+
+#include "spyrc_defaults.h"
 
 // Compile time parameters (could be made settings)
 static const int XPADDING = 1;
@@ -51,7 +59,7 @@ static inline void replaceall_non_escaped(
 	size_t start_pos = 0;
 	while((start_pos = str.find(from, start_pos)) != std::string::npos)
 	{
-		if (start_pos > 0 && str[start_pos-1] != '\\')
+		if (start_pos == 0 || str[start_pos-1] != '\\')
 		{
 			str.replace(start_pos, 1, to);
 			start_pos += to.length();
@@ -86,15 +94,14 @@ int ci_find_substr(const std::string& str1, const std::string& str2)
 
 struct DIRINFO {
 	DIRINFO() {}
-	DIRINFO(const char *name, unsigned char type)
-		: myname(name)
-		, mytype(type)
-		{}
+
+	bool isdirectory() const { return mystat.st_mode & S_IFDIR; }
+	bool isexecutable() const { return mystat.st_mode & S_IXUSR; }
 
 	bool operator<(const DIRINFO &rhs) const
 	{
-		bool adir = mytype == DT_DIR;
-		bool bdir = rhs.mytype == DT_DIR;
+		bool adir = isdirectory();
+		bool bdir = rhs.isdirectory();
 		if (adir != bdir)
 			return adir > bdir;
 
@@ -121,7 +128,7 @@ struct DIRINFO {
 	}
 
 	std::string myname;
-	char mytype;
+	struct stat mystat;
 };
 
 static const int BUFSIZE = 256;
@@ -143,6 +150,66 @@ static int thecols = 0;
 
 // Search info
 static char *thesearch = 0;
+
+// Color info
+struct COLOR {
+	enum COLORTYPE {
+		DIRECTORY,
+		EXECUTABLE,
+		TAGGED,
+		PATTERN
+	};
+
+	COLOR(const std::string &pattern, int color)
+		: mycolor(color)
+		{
+			if (pattern == "-dir")
+				mytype = DIRECTORY;
+			else if (pattern == "-x")
+				mytype = EXECUTABLE;
+			else if (pattern == "-tagged")
+				mytype = TAGGED;
+			else
+			{
+				mypattern = pattern;
+				mytype = PATTERN;
+			}
+		}
+
+	std::string mypattern;
+	COLORTYPE mytype;
+	int mycolor;
+};
+
+static std::vector<COLOR> thecolors;
+
+// Ignore info
+struct IGNOREMASK {
+	IGNOREMASK() : myenable(true) {}
+
+	std::vector<std::string> mypatterns;
+	bool myenable;
+};
+
+static std::map<std::string, IGNOREMASK> theignoremask;
+
+static bool ignored(const char *name)
+{
+	for (auto it = theignoremask.begin(); it != theignoremask.end(); ++it)
+	{
+		const IGNOREMASK &mask = it->second;
+		if (mask.myenable)
+		{
+			for (auto pat = mask.mypatterns.begin(); pat !=
+					mask.mypatterns.end(); ++pat)
+			{
+				if (!fnmatch(pat->c_str(), name, FNM_PERIOD))
+					return true;
+			}
+		}
+	}
+	return false;
+}
 
 static void layout(const std::vector<DIRINFO> &dirs, int ysize, int xsize)
 {
@@ -197,11 +264,14 @@ static void rebuild()
 	while(result)
 	{
 		if (strcmp(entry.d_name, ".") &&
-			strcmp(entry.d_name, ".."))
+			strcmp(entry.d_name, "..") &&
+			!ignored(entry.d_name))
 		{
 			thefiles.push_back(DIRINFO());
 			thefiles.back().myname = entry.d_name;
-			thefiles.back().mytype = entry.d_type;
+
+			// How much time does this take?
+			stat(entry.d_name, &thefiles.back().mystat);
 		}
 		readdir_r(dp, &entry, &result);
 	}
@@ -217,6 +287,14 @@ static void rebuild()
 	}
 
 	closedir(dp);
+}
+
+static void ignoretoggle(const char *label)
+{
+	IGNOREMASK &mask = theignoremask[label+1];
+	mask.myenable = !mask.myenable;
+
+	rebuild();
 }
 
 static int ncols()
@@ -326,7 +404,7 @@ static void lastfile()
 	filetopage();
 }
 
-static void set_attrs(char type, bool curfile)
+static void set_attrs(const DIRINFO &dir, bool curfile)
 {
 	if (curfile)
 	{
@@ -335,17 +413,36 @@ static void set_attrs(char type, bool curfile)
 	}
 	else
 	{
-		switch (type)
+		int color = 0; // Black
+		for (int i = 0; i < thecolors.size(); i++)
 		{
-			case DT_DIR: attrset(COLOR_PAIR(3)); break;
-			case DT_FIFO: attrset(COLOR_PAIR(1)); break;
-			case DT_CHR: attrset(COLOR_PAIR(2)); break;
-			case DT_BLK: attrset(COLOR_PAIR(4)); break;
-			case DT_LNK: attrset(COLOR_PAIR(6)); break;
-			case DT_SOCK: attrset(COLOR_PAIR(5)); break;
-			case DT_WHT: attrset(COLOR_PAIR(5)); break;
-			default: attrset(COLOR_PAIR(0)); break;
+			switch (thecolors[i].mytype)
+			{
+				case COLOR::DIRECTORY:
+					if (dir.isdirectory())
+					{
+						color = thecolors[i].mycolor;
+					}
+					break;
+				case COLOR::EXECUTABLE:
+					if (!dir.isdirectory() && dir.isexecutable())
+					{
+						color = thecolors[i].mycolor;
+					}
+					break;
+				case COLOR::TAGGED:
+					break;
+				case COLOR::PATTERN:
+					if (!fnmatch(thecolors[i].mypattern.c_str(),
+								dir.myname.c_str(), FNM_PERIOD))
+					{
+						color = thecolors[i].mycolor;
+					}
+					break;
+			}
 		}
+
+		attrset(COLOR_PAIR(color));
 	}
 }
 
@@ -358,13 +455,11 @@ static void drawfile(int file, const char *incsearch)
 
 	const DIRINFO &dir = thefiles[file];
 
-	set_attrs(dir.mytype, false);
-	switch (dir.mytype)
+	set_attrs(dir, false);
+	if (dir.isdirectory())
 	{
-		case DT_DIR:
-			move(2+y, xoff);
-			addch('*');
-			break;
+		move(2+y, xoff);
+		addch('*');
 	}
 
 	move(2+y, xoff+2);
@@ -375,33 +470,25 @@ static void drawfile(int file, const char *incsearch)
 		int hlstart = off;
 		int hlend = off + strlen(incsearch);
 
-		set_attrs(dir.mytype, file == thecurfile);
+		set_attrs(dir, file == thecurfile);
 
 		addnstr(dir.myname.c_str(), hlstart);
 
-		attrset(COLOR_PAIR(6));
+		attrset(COLOR_PAIR(8));
 		attron(A_REVERSE);
 		addnstr(dir.myname.c_str() + hlstart, hlend - hlstart);
 
-		set_attrs(dir.mytype, file == thecurfile);
+		set_attrs(dir, file == thecurfile);
 
 		addnstr(dir.myname.c_str() + hlend, dir.myname.length()-hlend);
 	}
 	else
 	{
-		set_attrs(dir.mytype, file == thecurfile);
+		set_attrs(dir, file == thecurfile);
 		addstr(dir.myname.c_str());
 	}
 
-	switch (dir.mytype)
-	{
-		case DT_DIR:
-			attrset(COLOR_PAIR(3));
-			break;
-		default:
-			attrset(COLOR_PAIR(0));
-			break;
-	}
+	set_attrs(dir, false);
 
 	move(2+y, xoff+1);
 }
@@ -450,6 +537,10 @@ static void draw(const char *incsearch = 0)
 static void quit()
 {
 	finish(0);
+}
+
+static void invalid()
+{
 }
 
 int spy_rl_getc(FILE *fp)
@@ -684,6 +775,19 @@ static void execute()
 	free(command);
 }
 
+static char **theargv = 0;
+
+static void reload()
+{
+	if (execvp(theargv[0], (char * const *)theargv) == -1)
+	{
+		perror("exec failed");
+		exit(1);
+	}
+
+	// Unreachable
+}
+
 typedef void(*VOIDFN)();
 typedef void(*STRFN)(const char *);
 
@@ -697,18 +801,33 @@ public:
 		: myvfn(fn)
 		, mysfn(0)
 		{}
-	CALLBACK(STRFN fn, const char *str)
+	CALLBACK(STRFN fn)
 		: myvfn(0)
 		, mysfn(fn)
-		, mystr(str)
+		{}
+	CALLBACK(VOIDFN vn, STRFN sn)
+		: myvfn(vn)
+		, mysfn(sn)
 		{}
 
 	void operator()() const
 	{
-		if (mysfn)
+		if (!mystr.empty())
 			mysfn(mystr.c_str());
 		else
 			myvfn();
+	}
+
+	bool has_vfn() const { return myvfn; }
+	bool has_sfn() const { return mysfn; }
+
+	void set_str(const std::string &str)
+	{
+		// For some reason, .spyrc prefixes the jump directory with '='
+		if (mysfn == jump_dir)
+			mystr = std::string(str.begin()+1, str.end());
+		else
+			mystr = str;
 	}
 
 private:
@@ -717,11 +836,174 @@ private:
 	std::string	mystr;
 };
 
-int main(int argc, char *argv[])
+static void read_spyrc(std::istream &is,
+		const std::map<std::string, CALLBACK> &commands,
+		std::map<int, CALLBACK> &callbacks)
 {
-	// TODO: Broken
-	signal(SIGINT, finish);
+	// Build a reverse map for all keys
+	std::map<std::string, int> keymap;
+	for (int i = 0; i < KEY_MAX; i++)
+	{
+		const char *name = keyname(i);
+		if (name)
+			keymap[name] = i;
+	}
 
+	// There's probably another mapping we should use
+	keymap["<Enter>"] = '\n';
+
+	std::map<std::string, int> colormap;
+	colormap["black"] = COLOR_BLACK;
+	colormap["red"] = COLOR_RED;
+	colormap["green"] = COLOR_GREEN;
+	colormap["yellow"] = COLOR_YELLOW;
+	colormap["blue"] = COLOR_BLUE;
+	colormap["magenta"] = COLOR_MAGENTA;
+	colormap["purple"] = COLOR_MAGENTA;
+	colormap["cyan"] = COLOR_CYAN;
+	colormap["white"] = COLOR_WHITE;
+
+	std::string line;
+	while (std::getline(is, line))
+	{
+		std::istringstream iss(line);
+
+		std::string cmd;
+		if (!(iss >> cmd))
+			continue;
+
+		if (cmd[0] == '#')
+			continue;
+
+		if (cmd == "map")
+		{
+			std::string keystr;
+			std::string command;
+
+			if (!(iss >> keystr))
+			{
+				fprintf(stderr, "warning: Missing key\n");
+				continue;
+			}
+
+			auto key_it = keymap.find(keystr);
+			if (key_it == keymap.end())
+			{
+				fprintf(stderr, "warning: Unrecognized key %s\n", keystr.c_str());
+				continue;
+			}
+
+			int key = key_it->second;
+
+			if (!(iss >> command))
+			{
+				fprintf(stderr, "warning: Missing callback\n");
+				continue;
+			}
+
+			auto command_it = commands.find(command);
+			if (command_it == commands.end())
+			{
+				fprintf(stderr, "warning: Unrecognized callback %s\n", command.c_str());
+				continue;
+			}
+
+			// The tail is read in 2 parts to skip whitespace, but
+			// preserve whitespace characters in the command string
+			std::string str, tail;
+			iss >> str;
+			std::getline(iss, tail);
+			str += tail;
+
+			CALLBACK cb = command_it->second;
+
+			if (!str.empty())
+			{
+				if (!cb.has_sfn())
+					fprintf(stderr, "warning: %s doesn't accept a string argument\n", command_it->first.c_str());
+				else
+					cb.set_str(str);
+			}
+			else
+			{
+				if (!cb.has_vfn())
+					fprintf(stderr, "warning: %s requires a string argument\n", command_it->first.c_str());
+			}
+
+			callbacks[key] = cb;
+		}
+		else if (cmd == "relaxprompt" ||
+				cmd == "relaxsearch" ||
+				cmd == "relaxcase")
+		{
+			// Ignored
+		}
+		else if (cmd == "ignoremask")
+		{
+			std::string pattern;
+			std::string index;
+			if (!(iss >> pattern))
+			{
+				fprintf(stderr, "warning: Missing pattern\n");
+				continue;
+			}
+
+			if (!(iss >> index))
+				index = "0";
+
+			theignoremask[index].mypatterns.push_back(pattern);
+		}
+		else if (cmd == "ignoredefault")
+		{
+			std::string index;
+			int enable = 0;
+			if (!(iss >> index))
+			{
+				fprintf(stderr, "warning: Missing index\n");
+				continue;
+			}
+			if (!(iss >> enable))
+			{
+				fprintf(stderr, "warning: Missing enable\n");
+				continue;
+			}
+
+			theignoremask[index].myenable = enable;
+		}
+		else if (cmd == "color")
+		{
+			std::string pattern;
+			std::string color;
+
+			if (!(iss >> pattern))
+			{
+				fprintf(stderr, "warning: Missing pattern\n");
+				continue;
+			}
+			if (!(iss >> color))
+			{
+				fprintf(stderr, "warning: Missing color\n");
+				continue;
+			}
+
+			auto color_it = colormap.find(color);
+			if (color_it == colormap.end())
+			{
+				fprintf(stderr, "warning: Unknown color: %s\n", color.c_str());
+				continue;
+			}
+
+			thecolors.push_back(COLOR(pattern, color_it->second));
+		}
+		else
+		{
+			fprintf(stderr, "warning: Unrecognized command %s\n", cmd.c_str());
+		}
+	}
+}
+
+static void start_curses()
+{
 	// Initialize curses
 	initscr();
 
@@ -746,47 +1028,81 @@ int main(int argc, char *argv[])
 
 		use_default_colors();
 
-		init_pair(1, COLOR_RED, -1);
-		init_pair(2, COLOR_GREEN, -1);
-		init_pair(3, COLOR_YELLOW, -1);
-		init_pair(4, COLOR_BLUE, -1);
-		init_pair(5, COLOR_CYAN, -1);
-		init_pair(6, COLOR_MAGENTA, -1);
-		init_pair(7, -1, COLOR_MAGENTA);
+		// Store foreground pair to match COLOR_* by index
+		for (int i = 1; i <= COLOR_WHITE; i++)
+			init_pair(i, i, -1);
+
+		// Inverted magenta for search coloring
+		init_pair(8, -1, COLOR_MAGENTA);
+	}
+}
+
+int main(int argc, char *argv[])
+{
+	theargv = argv;
+
+	signal(SIGINT, finish);
+
+	std::map<std::string, CALLBACK> commands;
+
+	commands["down"] = down;
+	commands["up"] = up;
+	commands["left"] = left;
+	commands["right"] = right;
+
+	commands["display"] = dirdown;
+	commands["enter"] = dirdown;
+	commands["climb"] = dirup;
+
+	commands["pagedown"] = pagedown;
+	commands["pageup"] = pageup;
+	commands["lastfile"] = lastfile;
+
+	commands["quit"] = quit;
+	commands["invalid"] = invalid;
+
+	commands["jump"] = CALLBACK(jump, jump_dir);
+
+	commands["search"] = search;
+	commands["next"] = searchnext;
+
+	commands["unix_cmd"] = execute;
+	commands["unix"] = execute_command;
+
+	commands["redraw"] = rebuild;
+
+	commands["loadrc"] = reload;
+
+	commands["ignoretoggle"] = ignoretoggle;
+
+	commands["take"] = invalid;
+	commands["setenv"] = invalid;
+
+	std::map<int, CALLBACK> callbacks;
+
+	// Install default keybindings
+	{
+		std::stringstream is((const char *)spyrc_defaults);
+		if (is)
+			read_spyrc(is, commands, callbacks);
 	}
 
-	std::map<int, CALLBACK> commands;
+	// Install user keybindings
+	{
+		// Try loading from .spyrc then $HOME/.spyrc
+		std::string dir = ".spyrc";
+		std::ifstream is(dir);
+		if (!is)
+		{
+			dir = s_home;
+			dir += "/.spyrc";
+			is.open(dir);
+		}
+		if (is)
+			read_spyrc(is, commands, callbacks);
+	}
 
-	commands['j'] = commands[KEY_DOWN] = down;
-	commands['k'] = commands[KEY_UP] = up;
-	commands['h'] = commands[KEY_LEFT] = left;
-	commands['l'] = commands[KEY_RIGHT] = right;
-
-	commands['d'] = dirdown;
-	commands['u'] = dirup;
-
-	commands['r'] = commands[KEY_NPAGE] = pagedown;
-	commands['t'] = commands[KEY_PPAGE] = pageup;
-	commands['G'] = lastfile;
-
-	commands['q'] = quit;
-
-	commands['g'] = jump;
-
-	commands['/'] = search;
-	commands['n'] = searchnext;
-
-	commands['!'] = commands[':'] = commands[';'] = execute;
-
-	commands['v'] = CALLBACK(execute_command, "$EDITOR %");
-	commands['L'] = CALLBACK(execute_command, "ls -l %");
-
-	// These should probably be sourced from .spyrc
-	commands['f'] = CALLBACK(execute_command, "file %");
-	commands['m'] = CALLBACK(execute_command, "make -j4");
-
-	commands['1'] = CALLBACK(jump_dir, "~/projects/spy");
-
+	start_curses();
 	rebuild();
 	while (true)
 	{
@@ -794,8 +1110,9 @@ int main(int argc, char *argv[])
 		refresh();
 
 		int c = getch();
-		if (commands.count(c))
-			commands[c]();
+		auto it = callbacks.find(c);
+		if (it != callbacks.end())
+			it->second();
 	}
 
 	finish(0);
