@@ -97,7 +97,8 @@ struct DIRINFO {
 	DIRINFO() {}
 
 	bool isdirectory() const { return mystat.st_mode & S_IFDIR; }
-	bool isexecutable() const { return mystat.st_mode & S_IXUSR; }
+	bool isexecute() const { return mystat.st_mode & S_IXUSR; }
+	bool iswrite() const { return mystat.st_mode & S_IWUSR; }
 
 	bool operator<(const DIRINFO &rhs) const
 	{
@@ -157,6 +158,7 @@ struct COLOR {
 	enum COLORTYPE {
 		DIRECTORY,
 		EXECUTABLE,
+		READONLY,
 		TAGGED,
 		PATTERN
 	};
@@ -168,6 +170,8 @@ struct COLOR {
 				mytype = DIRECTORY;
 			else if (pattern == "-x")
 				mytype = EXECUTABLE;
+			else if (pattern == "-ro")
+				mytype = READONLY;
 			else if (pattern == "-tagged")
 				mytype = TAGGED;
 			else
@@ -438,7 +442,13 @@ static void set_attrs(const DIRINFO &dir, bool curfile)
 					}
 					break;
 				case COLOR::EXECUTABLE:
-					if (!dir.isdirectory() && dir.isexecutable())
+					if (!dir.isdirectory() && dir.isexecute())
+					{
+						color = thecolors[i].mycolor;
+					}
+					break;
+				case COLOR::READONLY:
+					if (!dir.isdirectory() && !dir.iswrite())
 					{
 						color = thecolors[i].mycolor;
 					}
@@ -718,6 +728,8 @@ static void search()
 	searchnext();
 }
 
+static bool theexecutecomplete = false;
+
 static void execute_command(const char *command)
 {
 	// Temporarily end curses mode for command output
@@ -757,6 +769,8 @@ static void execute_command(const char *command)
 
 	int status;
 	waitpid(child, &status, 0);
+
+	theexecutecomplete = true;
 }
 
 static void execute()
@@ -787,10 +801,13 @@ static void execute()
 	free(command);
 }
 
+static char theinitialcwd[FILENAME_MAX];
 static char **theargv = 0;
 
 static void reload()
 {
+	if (chdir(theinitialcwd))
+		exit(1);
 	if (execvp(theargv[0], (char * const *)theargv) == -1)
 	{
 		perror("exec failed");
@@ -1051,6 +1068,9 @@ static void start_curses()
 
 int main(int argc, char *argv[])
 {
+	// Retain the initial directory for reload()
+	if (!getcwd(theinitialcwd, sizeof(theinitialcwd)))
+		exit(1);
 	theargv = argv;
 
 	signal(SIGINT, finish);
@@ -1118,10 +1138,21 @@ int main(int argc, char *argv[])
 	rebuild();
 	while (true)
 	{
-		draw();
-		refresh();
+		if (!theexecutecomplete)
+		{
+			draw();
+			refresh();
+		}
 
 		int c = getch();
+
+		if (theexecutecomplete)
+		{
+			draw();
+			refresh();
+			theexecutecomplete = false;
+		}
+
 		auto it = callbacks.find(c);
 		if (it != callbacks.end())
 			it->second();
