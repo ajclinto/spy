@@ -19,6 +19,7 @@ map KEY_PPAGE pageup
 map G lastfile
 
 map q quit
+map ' loadrc
 
 map g jump
 
