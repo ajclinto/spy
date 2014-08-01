@@ -9,6 +9,7 @@ map KEY_LEFT left
 map KEY_RIGHT right
 
 map d display
+map v enter
 map u climb
 
 map r pagedown
@@ -30,7 +31,5 @@ map ! unix_cmd
 map : unix_cmd
 map ; unix_cmd
 
-map v unix $EDITOR %
 map L unix ls -l %
 
-map " loadrc

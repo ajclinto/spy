@@ -20,6 +20,7 @@
 #include <fstream>
 #include <sstream>
 #include <iostream>
+#include <memory>
 
 #include "spyrc_defaults.h"
 
@@ -93,12 +94,18 @@ int ci_find_substr(const std::string& str1, const std::string& str2)
 	return -1; // not found
 }
 
-struct DIRINFO {
-	DIRINFO() {}
+class DIRINFO {
+public:
+	DIRINFO() : mydirectory(false) {}
 
-	bool isdirectory() const { return mystat.st_mode & S_IFDIR; }
-	bool isexecute() const { return mystat.st_mode & S_IXUSR; }
-	bool iswrite() const { return mystat.st_mode & S_IWUSR; }
+	const std::string &name() const { return myname; }
+	void setname(const char *name) { myname = name; }
+
+	bool isdirectory() const { return mydirectory; }
+	void setdirectory() { mydirectory = true; }
+
+	bool isexecute() const { lazy_stat(); return mystat->st_mode & S_IXUSR; }
+	bool iswrite() const { lazy_stat(); return mystat->st_mode & S_IWUSR; }
 
 	bool operator<(const DIRINFO &rhs) const
 	{
@@ -129,8 +136,19 @@ struct DIRINFO {
 		return off >= 0;
 	}
 
+private:
+	void lazy_stat() const
+	{
+		if (!mystat)
+		{
+			mystat.reset(new struct stat);
+			stat(myname.c_str(), mystat.get());
+		}
+	}
+
 	std::string myname;
-	struct stat mystat;
+	mutable std::shared_ptr<struct stat> mystat;
+	bool mydirectory;
 };
 
 static const int BUFSIZE = 256;
@@ -221,7 +239,7 @@ static void layout(const std::vector<DIRINFO> &dirs, int ysize, int xsize)
 	int maxwidth = 0;
 	for (int i = 0; i < dirs.size(); i++)
 	{
-		maxwidth = SYSmax(maxwidth, dirs[i].myname.length() + 2);
+		maxwidth = SYSmax(maxwidth, dirs[i].name().length() + 2);
 	}
 
 	therows = ysize;
@@ -264,7 +282,6 @@ static void rebuild()
 
 	struct dirent entry;
 	struct dirent *result;
-	int y = 0;
 	readdir_r(dp, &entry, &result);
 	while(result)
 	{
@@ -273,10 +290,10 @@ static void rebuild()
 			!ignored(entry.d_name))
 		{
 			thefiles.push_back(DIRINFO());
-			thefiles.back().myname = entry.d_name;
+			thefiles.back().setname(entry.d_name);
 
-			// How much time does this take?
-			stat(entry.d_name, &thefiles.back().mystat);
+			if (entry.d_type == DT_DIR)
+				thefiles.back().setdirectory();
 		}
 		readdir_r(dp, &entry, &result);
 	}
@@ -388,9 +405,23 @@ static void dirup()
 {
 	jump_dir("..");
 }
-static void dirdown()
+
+static void execute_command(const char *);
+
+static void dirdown_enter()
 {
-	jump_dir(thefiles[thecurfile].myname.c_str());
+	if (thefiles[thecurfile].isdirectory())
+		jump_dir(thefiles[thecurfile].name().c_str());
+	else
+		execute_command("$EDITOR %");
+}
+
+static void dirdown_display()
+{
+	if (thefiles[thecurfile].isdirectory())
+		jump_dir(thefiles[thecurfile].name().c_str());
+	else
+		execute_command("$PAGER %");
 }
 
 static void pageup()
@@ -457,7 +488,7 @@ static void set_attrs(const DIRINFO &dir, bool curfile)
 					break;
 				case COLOR::PATTERN:
 					if (!fnmatch(thecolors[i].mypattern.c_str(),
-								dir.myname.c_str(), FNM_PERIOD))
+								dir.name().c_str(), FNM_PERIOD))
 					{
 						color = thecolors[i].mycolor;
 					}
@@ -495,20 +526,20 @@ static void drawfile(int file, const char *incsearch)
 
 		set_attrs(dir, file == thecurfile);
 
-		addnstr(dir.myname.c_str(), hlstart);
+		addnstr(dir.name().c_str(), hlstart);
 
 		attrset(COLOR_PAIR(8));
 		attron(A_REVERSE);
-		addnstr(dir.myname.c_str() + hlstart, hlend - hlstart);
+		addnstr(dir.name().c_str() + hlstart, hlend - hlstart);
 
 		set_attrs(dir, file == thecurfile);
 
-		addnstr(dir.myname.c_str() + hlend, dir.myname.length()-hlend);
+		addnstr(dir.name().c_str() + hlend, dir.name().length()-hlend);
 	}
 	else
 	{
 		set_attrs(dir, file == thecurfile);
-		addstr(dir.myname.c_str());
+		addstr(dir.name().c_str());
 	}
 
 	set_attrs(dir, false);
@@ -750,7 +781,7 @@ static void execute_command(const char *command)
 		std::string expanded = command;
 
 		if (thecurfile < thefiles.size())
-			replaceall_non_escaped(expanded, '%', thefiles[thecurfile].myname);
+			replaceall_non_escaped(expanded, '%', thefiles[thecurfile].name());
 
 		// Execute commands in a subshell
 		args[va_args++] = s_shell ? s_shell : "/bin/bash";
@@ -1062,7 +1093,7 @@ static void start_curses()
 			init_pair(i, i, -1);
 
 		// Inverted magenta for search coloring
-		init_pair(8, -1, COLOR_MAGENTA);
+		init_pair(8, COLOR_MAGENTA, -1);
 	}
 }
 
@@ -1082,8 +1113,8 @@ int main(int argc, char *argv[])
 	commands["left"] = left;
 	commands["right"] = right;
 
-	commands["display"] = dirdown;
-	commands["enter"] = dirdown;
+	commands["display"] = dirdown_display;
+	commands["enter"] = dirdown_enter;
 	commands["climb"] = dirup;
 
 	commands["pagedown"] = pagedown;
