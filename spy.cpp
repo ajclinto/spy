@@ -1,5 +1,7 @@
 #include <stdlib.h>
 #include <curses.h>
+#include <termcap.h>
+#include <termios.h>
 #include <signal.h>
 #include <dirent.h>
 #include <unistd.h>
@@ -38,6 +40,9 @@ static HISTORY_STATE s_jump_history;
 static HISTORY_STATE s_search_history;
 static HISTORY_STATE s_execute_history;
 
+// Child process
+static int thechild = 0;
+
 static inline int SYSmax(int a, int b) { return a > b ? a : b; }
 static inline int SYSmin(int a, int b) { return a < b ? a : b; }
 
@@ -69,11 +74,23 @@ static inline void replaceall_non_escaped(
 	}
 }
 
-static void finish(int sig)
+static void quit()
 {
 	endwin();
-
 	exit(0);
+}
+
+static void signal_handler(int sig)
+{
+	if (thechild)
+	{
+		kill(thechild, sig);
+	}
+	else
+	{
+		if (sig == SIGINT)
+			quit();
+	}
 }
 
 struct ci_equal {
@@ -588,11 +605,6 @@ static void draw(const char *incsearch = 0)
 	}
 }
 
-static void quit()
-{
-	finish(0);
-}
-
 static void invalid()
 {
 }
@@ -759,19 +771,60 @@ static void search()
 	searchnext();
 }
 
-static bool theexecutecomplete = false;
+static int getchar_unbuffered()
+{
+	// Set raw mode for stdin temporarily so that we can read a single
+	// character of unbuffered input.
+	struct termios old_settings;
+	struct termios new_settings;
+
+	tcgetattr(0, &old_settings);
+
+	new_settings = old_settings;
+	cfmakeraw (&new_settings);
+	tcsetattr (0, TCSANOW, &new_settings);
+
+	int ch = getchar();
+
+	tcsetattr (0, TCSANOW, &old_settings);
+
+	return ch;
+}
+
+static int continue_prompt()
+{
+	char buffer[2048];
+	char *ptr = buffer;
+	char *mr_string = tgetstr ("mr", &ptr); // Enter reverse mode
+	char *me_string = tgetstr ("me", &ptr); // Exit all formatting modes
+
+	tputs(mr_string, 1, putchar);
+	tputs("Continue: ", 1, putchar);
+	tputs(me_string, 1, putchar);
+
+	int ch = getchar_unbuffered();
+	tputs("\n", 1, putchar);
+
+	return ch;
+}
+
+static int thependingch = 0;
 
 static void execute_command(const char *command)
 {
 	// Temporarily end curses mode for command output
 	endwin();
 
-	int child = fork();
-	if (child == -1)
+	// Leave the command in the output stream
+	printf("!");
+	printf("%s\n", command);
+
+	thechild = fork();
+	if (thechild == -1)
 	{
 		perror("fork failed");
 	}
-	else if (child == 0)
+	else if (thechild == 0)
 	{
 		const char		*delim = " \t";
 		const char      *args[256];
@@ -799,9 +852,11 @@ static void execute_command(const char *command)
 	}
 
 	int status;
-	waitpid(child, &status, 0);
+	waitpid(thechild, &status, 0);
 
-	theexecutecomplete = true;
+	thechild = 0;
+
+	thependingch = continue_prompt();
 }
 
 static void execute()
@@ -837,6 +892,8 @@ static char **theargv = 0;
 
 static void reload()
 {
+	endwin();
+
 	if (chdir(theinitialcwd))
 		exit(1);
 	if (execvp(theargv[0], (char * const *)theargv) == -1)
@@ -1065,7 +1122,13 @@ static void read_spyrc(std::istream &is,
 static void start_curses()
 {
 	// Initialize curses
-	initscr();
+
+	// Using newterm() instead of initscr() is supposed to avoid stdout
+	// buffering problems with child processes
+	newterm(getenv("TERM"),
+			fopen("/dev/tty", "w"),
+			fopen("/dev/tty", "r"));
+	//initscr();
 
 	// This is required for the arrow and backspace keys to function
 	// correctly
@@ -1074,6 +1137,10 @@ static void start_curses()
 	//nonl();         /* tell curses not to do NL->CR/NL on output */
 	//cbreak();       /* take input chars one at a time, no wait for \n */
 	//echo();         /* echo input - in color */
+
+	// This is required to wrap long command lines. It does not actually
+	// allow scrolling with the mouse wheel
+	scrollok(stdscr, true);
 
 	ESCDELAY = 0;
 
@@ -1104,7 +1171,7 @@ int main(int argc, char *argv[])
 		exit(1);
 	theargv = argv;
 
-	signal(SIGINT, finish);
+	signal(SIGINT, signal_handler);
 
 	std::map<std::string, CALLBACK> commands;
 
@@ -1169,19 +1236,18 @@ int main(int argc, char *argv[])
 	rebuild();
 	while (true)
 	{
-		if (!theexecutecomplete)
+		draw();
+		refresh();
+
+		int c;
+		if (!thependingch)
 		{
-			draw();
-			refresh();
+			c = getch();
 		}
-
-		int c = getch();
-
-		if (theexecutecomplete)
+		else
 		{
-			draw();
-			refresh();
-			theexecutecomplete = false;
+			c = thependingch;
+			thependingch = 0;
 		}
 
 		auto it = callbacks.find(c);
@@ -1189,6 +1255,6 @@ int main(int argc, char *argv[])
 			it->second();
 	}
 
-	finish(0);
+	quit();
 }
 
