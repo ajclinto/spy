@@ -624,25 +624,26 @@ int spy_rl_getc(FILE *fp)
 	int key = getch();
 	switch (key)
 	{
-		case ESC:
-			*rl_line_buffer = '\0';
-			key = EOF;
-			break;
 		case KEY_BACKSPACE:
 			if (!rl_point)
 			{
+				// Backspace past the prompt cancels the command in spy
 				*rl_line_buffer = '\0';
 				key = EOF;
 			}
 			else
 			{
-				key = RUBOUT;
+				key = '\b'; // Backspace character
 			}
 			break;
-		case KEY_UP: key = CTRL('p'); break;
-		case KEY_DOWN: key = CTRL('n'); break;
-		case KEY_LEFT: key = CTRL('b'); break;
-		case KEY_RIGHT: key = CTRL('f'); break;
+
+		case KEY_DC:    key = ESC; break;
+		//case KEY_DC:    key = 0; rl_delete(1, 0); break;
+
+		case KEY_UP:    key = 0; rl_get_previous_history(1, 0); break;
+		case KEY_DOWN:  key = 0; rl_get_next_history(1, 0); break;
+		case KEY_RIGHT: key = 0; rl_forward_char(1, 0); break;
+		case KEY_LEFT:  key = 0; rl_backward_char(1, 0); break;
 	}
 	return key;
 }
