@@ -31,5 +31,7 @@ map ! unix_cmd
 map : unix_cmd
 map ; unix_cmd
 
+map . last_cmd
+
 map L unix ls -l %
 

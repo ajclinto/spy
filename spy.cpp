@@ -36,6 +36,7 @@ const char *s_shell = getenv("SHELL");
 const char *s_home = getenv("HOME");
 
 // History
+static const std::string s_historyfile = std::string(s_home) + "/.spyHistoryNew";
 static HISTORY_STATE s_jump_history;
 static HISTORY_STATE s_search_history;
 static HISTORY_STATE s_execute_history;
@@ -77,6 +78,15 @@ static inline void replaceall_non_escaped(
 static void quit()
 {
 	endwin();
+
+	// Save command history
+	history_set_history_state(&s_execute_history);
+	if (write_history(s_historyfile.c_str()))
+	{
+		fprintf(stderr, "warning: Could not write history file %s\n",
+				s_historyfile.c_str());
+	}
+
 	exit(0);
 }
 
@@ -718,6 +728,23 @@ void spy_rl_display()
 	refresh();
 }
 
+static void add_unique_history(const char *command)
+{
+	int offset = history_search_pos(command, -1, where_history());
+
+	if (offset != -1)
+	{
+		HIST_ENTRY *entry = remove_history(offset);
+		free_history_entry(entry);
+	}
+
+	add_history(command);
+
+	// The method calls above seem to mess up the current history pointer,
+	// so restore it here.
+	history_set_pos(history_length-1);
+}
+
 static void jump()
 {
 	// Configure readline
@@ -734,7 +761,8 @@ static void jump()
 
 	std::string dir = *input ? input : lastjump.c_str();
 
-	add_history(dir.c_str());
+	add_unique_history(dir.c_str());
+
 	s_jump_history = *history_get_history_state();
 
 	// Store the current directory
@@ -764,7 +792,7 @@ static void search()
 
 	if (thesearch && *thesearch)
 	{
-		add_history(thesearch);
+		add_unique_history(thesearch);
 		s_search_history = *history_get_history_state();
 	}
 
@@ -791,19 +819,33 @@ static int getchar_unbuffered()
 	return ch;
 }
 
+static char s_termcap_buf[2048];
+
+static char *s_mr = 0;
+static char *s_me = 0;
+static char *s_cr = 0;
+static char *s_ce = 0;
+
+static void init_termcap()
+{
+	char *ptr = s_termcap_buf;
+
+	s_mr = tgetstr ("mr", &ptr); // Enter reverse mode
+	s_me = tgetstr ("me", &ptr); // Exit all formatting modes
+	s_cr = tgetstr ("cr", &ptr); // Move to start of line
+	s_ce = tgetstr ("ce", &ptr); // Clear to end of line
+}
+
 static int continue_prompt()
 {
-	char buffer[2048];
-	char *ptr = buffer;
-	char *mr_string = tgetstr ("mr", &ptr); // Enter reverse mode
-	char *me_string = tgetstr ("me", &ptr); // Exit all formatting modes
-
-	tputs(mr_string, 1, putchar);
+	tputs(s_mr, 1, putchar);
 	tputs("Continue: ", 1, putchar);
-	tputs(me_string, 1, putchar);
+	tputs(s_me, 1, putchar);
 
 	int ch = getchar_unbuffered();
-	tputs("\n", 1, putchar);
+
+	tputs(s_cr, 1, putchar);
+	tputs(s_ce, 1, putchar);
 
 	return ch;
 }
@@ -816,8 +858,10 @@ static void execute_command(const char *command)
 	endwin();
 
 	// Leave the command in the output stream
-	printf("!");
-	printf("%s\n", command);
+	tputs("!", 1, putchar);
+	tputs(command, 1, putchar);
+	tputs(s_ce, 1, putchar); // Necessary to clear lingering "Continue: "
+	tputs("\n", 1, putchar);
 
 	thechild = fork();
 	if (thechild == -1)
@@ -879,12 +923,23 @@ static void execute()
 		return;
 	}
 
-	add_history(command);
+	add_unique_history(command);
+
 	s_execute_history = *history_get_history_state();
 
 	execute_command(command);
 
 	free(command);
+}
+
+static void last_command()
+{
+	history_set_history_state(&s_execute_history);
+
+	const HIST_ENTRY *hist = current_history();
+
+	if (hist)
+		execute_command(hist->line);
 }
 
 static char theinitialcwd[FILENAME_MAX];
@@ -1119,7 +1174,7 @@ static void read_spyrc(std::istream &is,
 	}
 }
 
-static void start_curses()
+static void init_curses()
 {
 	// Initialize curses
 
@@ -1132,22 +1187,16 @@ static void start_curses()
 
 	// This is required for the arrow and backspace keys to function
 	// correctly
-	keypad(stdscr, TRUE);
+	keypad(stdscr, true);
 
-	//nonl();         /* tell curses not to do NL->CR/NL on output */
-	//cbreak();       /* take input chars one at a time, no wait for \n */
-	//echo();         /* echo input - in color */
+	cbreak(); // Accept characters immediately without waiting for NL
+	noecho(); // Don't echo input to the screen
 
 	// This is required to wrap long command lines. It does not actually
 	// allow scrolling with the mouse wheel
 	scrollok(stdscr, true);
 
 	ESCDELAY = 0;
-
-	// Initialize readline
-	s_jump_history = *history_get_history_state();
-	s_search_history = *history_get_history_state();
-	s_execute_history = *history_get_history_state();
 
 	if (has_colors())
 	{
@@ -1162,6 +1211,14 @@ static void start_curses()
 		// Inverted magenta for search coloring
 		init_pair(8, COLOR_MAGENTA, -1);
 	}
+
+	// Initialize readline
+	s_jump_history = *history_get_history_state();
+	s_search_history = *history_get_history_state();
+
+	// Only execute history is stored to file
+	read_history(s_historyfile.c_str());
+	s_execute_history = *history_get_history_state();
 }
 
 int main(int argc, char *argv[])
@@ -1198,6 +1255,7 @@ int main(int argc, char *argv[])
 
 	commands["unix_cmd"] = execute;
 	commands["unix"] = execute_command;
+	commands["last_cmd"] = last_command;
 
 	commands["redraw"] = rebuild;
 
@@ -1232,7 +1290,9 @@ int main(int argc, char *argv[])
 			read_spyrc(is, commands, callbacks);
 	}
 
-	start_curses();
+	init_curses();
+	init_termcap();
+
 	rebuild();
 	while (true)
 	{
