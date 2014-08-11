@@ -14,6 +14,7 @@
 #include <readline/history.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
+#include <sys/ioctl.h>
 
 #include <string>
 #include <vector>
@@ -34,9 +35,11 @@ const bool HLSEARCH = false;
 // Environment
 const char *s_shell = getenv("SHELL");
 const char *s_home = getenv("HOME");
+const char *s_editor = getenv("EDITOR");
+const char *s_pager = getenv("PAGER");
 
 // History
-static const std::string s_historyfile = std::string(s_home) + "/.spyHistoryNew";
+static const std::string s_historyfile = std::string(s_home) + "/.spy_history";
 static HISTORY_STATE s_jump_history;
 static HISTORY_STATE s_search_history;
 static HISTORY_STATE s_execute_history;
@@ -101,6 +104,14 @@ static void signal_handler(int sig)
 		if (sig == SIGINT)
 			quit();
 	}
+}
+
+static bool theresized = false;
+
+static void signal_resize(int)
+{
+	// Tell the main event loop that the terminal was resized
+	theresized = true;
 }
 
 struct ci_equal {
@@ -269,7 +280,7 @@ static void layout(const std::vector<DIRINFO> &dirs, int ysize, int xsize)
 		maxwidth = SYSmax(maxwidth, dirs[i].name().length() + 2);
 	}
 
-	therows = ysize;
+	therows = SYSmax(ysize, 1);
 	thecols = xsize / (maxwidth + XPADDING);
 	thecols = SYSmax(thecols, 1);
 
@@ -433,14 +444,19 @@ static void dirup()
 	jump_dir("..");
 }
 
-static void execute_command(const char *);
+static void execute_command_without_prompt(const char *);
+static void execute_command_with_prompt(const char *);
 
 static void dirdown_enter()
 {
 	if (thefiles[thecurfile].isdirectory())
 		jump_dir(thefiles[thecurfile].name().c_str());
 	else
-		execute_command("$EDITOR %");
+	{
+		std::string cmd = s_editor ? s_editor : "vim";
+		cmd += " %";
+		execute_command_without_prompt(cmd.c_str());
+	}
 }
 
 static void dirdown_display()
@@ -448,7 +464,11 @@ static void dirdown_display()
 	if (thefiles[thecurfile].isdirectory())
 		jump_dir(thefiles[thecurfile].name().c_str());
 	else
-		execute_command("$PAGER %");
+	{
+		std::string cmd = s_pager ? s_pager : "less";
+		cmd += " %";
+		execute_command_without_prompt(cmd.c_str());
+	}
 }
 
 static void pageup()
@@ -471,6 +491,12 @@ static void pagedown()
 			filetopage();
 		}
 	}
+}
+
+static void firstfile()
+{
+	thecurfile = 0;
+	filetopage();
 }
 
 static void lastfile()
@@ -582,12 +608,15 @@ static void draw(const char *incsearch = 0)
 	gethostname(hostname, BUFSIZE);
 	getlogin_r(username, BUFSIZE);
 
-	clear();
+	// Use erase() to clear the screen before drawing. Don't use clear(),
+	// since this will cause the next refresh() to clear the screen causing
+	// flicker.
+	erase();
 
 	attrset(A_NORMAL);
 
 	move(0, 0);
-	printw("%s@%s %s", username, hostname, thecwd);
+	printw("%s@%s: %s", username, hostname, thecwd);
 
 	if (thefiles.size())
 	{
@@ -640,6 +669,9 @@ int spy_rl_getc(FILE *fp)
 		case KEY_DC:    key = ESC; break;
 		//case KEY_DC:    key = 0; rl_delete(1, 0); break;
 
+		// For the rl_display function to be called, we have to return
+		// something - so return a null key (and assume readline ignores it
+		// and refreshes the display).
 		case KEY_UP:    key = 0; rl_get_previous_history(1, 0); break;
 		case KEY_DOWN:  key = 0; rl_get_next_history(1, 0); break;
 		case KEY_RIGHT: key = 0; rl_forward_char(1, 0); break;
@@ -749,7 +781,6 @@ static void add_unique_history(const char *command)
 static void jump()
 {
 	// Configure readline
-	rl_getc_function = spy_rl_getc;
 	rl_redisplay_function = spy_rl_display<JUMP>;
 
 	history_set_history_state(&s_jump_history);
@@ -783,7 +814,6 @@ static void search()
 	}
 
 	// Configure readline
-	rl_getc_function = spy_rl_getc;
 	rl_redisplay_function = spy_rl_display<SEARCH>;
 
 	history_set_history_state(&s_search_history);
@@ -826,6 +856,7 @@ static char *s_mr = 0;
 static char *s_me = 0;
 static char *s_cr = 0;
 static char *s_ce = 0;
+static char *s_cm = 0;
 
 static void init_termcap()
 {
@@ -835,6 +866,18 @@ static void init_termcap()
 	s_me = tgetstr ("me", &ptr); // Exit all formatting modes
 	s_cr = tgetstr ("cr", &ptr); // Move to start of line
 	s_ce = tgetstr ("ce", &ptr); // Clear to end of line
+	s_cm = tgetstr ("cm", &ptr); // Cursor movement
+}
+
+// Expand special command characters
+static std::string expand_command(const char *command)
+{
+	std::string expanded = command;
+
+	if (thecurfile < thefiles.size())
+		replaceall_non_escaped(expanded, '%', thefiles[thecurfile].name());
+
+	return expanded;
 }
 
 static int continue_prompt()
@@ -853,16 +896,23 @@ static int continue_prompt()
 
 static int thependingch = 0;
 
+template <bool prompt>
 static void execute_command(const char *command)
 {
-	// Temporarily end curses mode for command output
 	endwin();
 
-	// Leave the command in the output stream
-	tputs("!", 1, putchar);
-	tputs(command, 1, putchar);
-	tputs(s_ce, 1, putchar); // Necessary to clear lingering "Continue: "
-	tputs("\n", 1, putchar);
+	// Expand special characters
+	std::string expanded = expand_command(command);
+
+	// Leave the expanded command in the output stream
+	if (prompt)
+	{
+		tputs(tgoto(s_cm, 0, LINES-1), 1, putchar);
+		tputs("!", 1, putchar);
+		tputs(expanded.c_str(), 1, putchar);
+		tputs(s_ce, 1, putchar); // Necessary to clear lingering "Continue: "
+		tputs("\n", 1, putchar);
+	}
 
 	thechild = fork();
 	if (thechild == -1)
@@ -871,15 +921,10 @@ static void execute_command(const char *command)
 	}
 	else if (thechild == 0)
 	{
+		// Child
 		const char		*delim = " \t";
 		const char      *args[256];
 		int				 va_args = 0;
-
-		// Expand special characters
-		std::string expanded = command;
-
-		if (thecurfile < thefiles.size())
-			replaceall_non_escaped(expanded, '%', thefiles[thecurfile].name());
 
 		// Execute commands in a subshell
 		args[va_args++] = s_shell ? s_shell : "/bin/bash";
@@ -896,18 +941,38 @@ static void execute_command(const char *command)
 		// Unreachable
 	}
 
+	// Parent
 	int status;
 	waitpid(thechild, &status, 0);
 
 	thechild = 0;
 
-	thependingch = continue_prompt();
+	if (prompt)
+	{
+		thependingch = continue_prompt();
+	}
+	else
+	{
+		// The child might have left garbage on the screen - schedule a
+		// clear with the next curses refresh().
+		clear();
+	}
+}
+
+
+static void execute_command_with_prompt(const char *command)
+{
+	execute_command<true>(command);
+}
+
+static void execute_command_without_prompt(const char *command)
+{
+	execute_command<false>(command);
 }
 
 static void execute()
 {
 	// Configure readline
-	rl_getc_function = spy_rl_getc;
 	rl_redisplay_function = spy_rl_display<EXECUTE>;
 
 	history_set_history_state(&s_execute_history);
@@ -928,7 +993,7 @@ static void execute()
 
 	s_execute_history = *history_get_history_state();
 
-	execute_command(command);
+	execute_command_with_prompt(command);
 
 	free(command);
 }
@@ -940,7 +1005,7 @@ static void last_command()
 	const HIST_ENTRY *hist = current_history();
 
 	if (hist)
-		execute_command(hist->line);
+		execute_command_with_prompt(hist->line);
 }
 
 static char theinitialcwd[FILENAME_MAX];
@@ -1175,15 +1240,26 @@ static void read_spyrc(std::istream &is,
 	}
 }
 
+static void spy_rl_display_match_list (char **matches, int len, int max)
+{
+	// TODO
+}
+
+static void spy_rl_prep_terminal(int)
+{
+}
+
+static void spy_rl_deprep_terminal()
+{
+}
+
 static void init_curses()
 {
 	// Initialize curses
 
 	// Using newterm() instead of initscr() is supposed to avoid stdout
 	// buffering problems with child processes
-	newterm(getenv("TERM"),
-			fopen("/dev/tty", "w"),
-			fopen("/dev/tty", "r"));
+	newterm(getenv("TERM"), fopen("/dev/tty", "w"), fopen("/dev/tty", "r"));
 	//initscr();
 
 	// This is required for the arrow and backspace keys to function
@@ -1220,6 +1296,14 @@ static void init_curses()
 	// Only execute history is stored to file
 	read_history(s_historyfile.c_str());
 	s_execute_history = *history_get_history_state();
+
+	rl_getc_function = spy_rl_getc;
+	rl_prep_term_function = spy_rl_prep_terminal;
+	rl_deprep_term_function = spy_rl_deprep_terminal;
+	rl_prompt = 0;
+	rl_already_prompted = 0;
+	rl_outstream = 0;
+	rl_completion_display_matches_hook = spy_rl_display_match_list;
 }
 
 int main(int argc, char *argv[])
@@ -1230,6 +1314,7 @@ int main(int argc, char *argv[])
 	theargv = argv;
 
 	signal(SIGINT, signal_handler);
+	signal(SIGWINCH, signal_resize);
 
 	std::map<std::string, CALLBACK> commands;
 
@@ -1244,6 +1329,7 @@ int main(int argc, char *argv[])
 
 	commands["pagedown"] = pagedown;
 	commands["pageup"] = pageup;
+	commands["firstfile"] = firstfile;
 	commands["lastfile"] = lastfile;
 
 	commands["quit"] = quit;
@@ -1255,7 +1341,9 @@ int main(int argc, char *argv[])
 	commands["next"] = searchnext;
 
 	commands["unix_cmd"] = execute;
-	commands["unix"] = execute_command;
+	commands["unix"] = execute_command_with_prompt;
+	commands["command"] = execute_command_with_prompt;
+	commands["silent_cmd"] = execute_command_without_prompt;
 	commands["last_cmd"] = last_command;
 
 	commands["redraw"] = rebuild;
@@ -1297,6 +1385,14 @@ int main(int argc, char *argv[])
 	rebuild();
 	while (true)
 	{
+		if (theresized)
+		{
+			endwin();
+			refresh();
+			rebuild();
+			theresized = false;
+		}
+
 		draw();
 		refresh();
 
@@ -1310,7 +1406,7 @@ int main(int argc, char *argv[])
 			c = thependingch;
 			thependingch = 0;
 		}
-
+		
 		auto it = callbacks.find(c);
 		if (it != callbacks.end())
 			it->second();

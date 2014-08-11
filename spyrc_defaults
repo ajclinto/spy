@@ -17,6 +17,8 @@ map t pageup
 map KEY_NPAGE pagedown
 map KEY_PPAGE pageup
 
+map KEY_HOME firstfile
+map KEY_END lastfile
 map G lastfile
 
 map q quit
@@ -32,6 +34,8 @@ map : unix_cmd
 map ; unix_cmd
 
 map . last_cmd
+
+map % unix ./%
 
 map L unix ls -l %
 
