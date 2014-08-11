@@ -132,6 +132,21 @@ int ci_find_substr(const std::string& str1, const std::string& str2)
 	return -1; // not found
 }
 
+// Extract a decimal integer from the string, and leave 'a' pointing to the
+// next character after the integer.
+static inline int extract_integer(const char *&a)
+{
+	int val = *a - '0';
+	++a;
+	while (isdigit(*a))
+	{
+		val *= 10;
+		val += *a - '0';
+		++a;
+	}
+	return val;
+}
+
 class DIRINFO {
 public:
 	DIRINFO() : mydirectory(false) {}
@@ -152,7 +167,29 @@ public:
 		if (adir != bdir)
 			return adir > bdir;
 
-		return strcasecmp(myname.c_str(), rhs.myname.c_str()) < 0;
+		// Lexicographic compare that extracts integers and compares them
+		// as numbers
+		const char *a = myname.c_str();
+		const char *b = rhs.myname.c_str();
+		while (*a && *b)
+		{
+			char ac = tolower(*a);
+			char bc = tolower(*b);
+			bool adigit = isdigit(ac);
+			bool bdigit = isdigit(bc);
+			if (!adigit || !bdigit)
+				return ac < bc;
+
+			int aint = extract_integer(a);
+			int bint = extract_integer(b);
+			if (aint != bint)
+				return aint < bint;
+
+			++a;
+			++b;
+		}
+
+		return *a < *b;
 	}
 
 	bool match(const char *search) const { int off; return match(search, off); }
