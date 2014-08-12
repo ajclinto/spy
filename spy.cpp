@@ -881,6 +881,8 @@ static int getchar_unbuffered()
 	tcsetattr (0, TCSANOW, &new_settings);
 
 	int ch = getchar();
+	if (ch == '\n' || ch == '\r')
+		ch = '\n';
 
 	tcsetattr (0, TCSANOW, &old_settings);
 
