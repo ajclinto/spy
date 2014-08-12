@@ -177,13 +177,16 @@ public:
 			char bc = tolower(*b);
 			bool adigit = isdigit(ac);
 			bool bdigit = isdigit(bc);
-			if (!adigit || !bdigit)
+			if ((!adigit || !bdigit) && ac != bc)
 				return ac < bc;
 
-			int aint = extract_integer(a);
-			int bint = extract_integer(b);
-			if (aint != bint)
-				return aint < bint;
+			if (adigit)
+			{
+				int aint = extract_integer(a);
+				int bint = extract_integer(b);
+				if (aint != bint)
+					return aint < bint;
+			}
 
 			++a;
 			++b;
@@ -892,6 +895,7 @@ static int getchar_unbuffered()
 static char s_termcap_buf[2048];
 
 static char *s_mr = 0;
+static char *s_md = 0;
 static char *s_me = 0;
 static char *s_cr = 0;
 static char *s_ce = 0;
@@ -902,6 +906,7 @@ static void init_termcap()
 	char *ptr = s_termcap_buf;
 
 	s_mr = tgetstr ("mr", &ptr); // Enter reverse mode
+	s_md = tgetstr ("md", &ptr); // Enter bold mode
 	s_me = tgetstr ("me", &ptr); // Exit all formatting modes
 	s_cr = tgetstr ("cr", &ptr); // Move to start of line
 	s_ce = tgetstr ("ce", &ptr); // Clear to end of line
@@ -946,9 +951,11 @@ static void execute_command(const char *command)
 	// Leave the expanded command in the output stream
 	if (prompt)
 	{
+		tputs(s_md, 1, putchar);
 		tputs(tgoto(s_cm, 0, LINES-1), 1, putchar);
 		tputs("!", 1, putchar);
 		tputs(expanded.c_str(), 1, putchar);
+		tputs(s_me, 1, putchar);
 		tputs(s_ce, 1, putchar); // Necessary to clear lingering "Continue: "
 		tputs("\n", 1, putchar);
 	}
