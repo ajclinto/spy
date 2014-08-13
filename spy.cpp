@@ -10,6 +10,7 @@
 #include <fnmatch.h>
 #include <wordexp.h>
 #include <pwd.h>
+#include <regex.h>
 #include <readline/readline.h>
 #include <readline/history.h>
 #include <sys/wait.h>
@@ -147,6 +148,28 @@ static inline int extract_integer(const char *&a)
 	return val;
 }
 
+class SPY_REGEX {
+public:
+	SPY_REGEX(const char *pattern)
+	{
+		regcomp(&m_regex, pattern, RELAXCASE ? REG_ICASE : 0);
+	}
+	bool search(const char *str, int &start, int &end) const
+	{
+		regmatch_t match;
+		if (!regexec(&m_regex, str, 1, &match, 0))
+		{
+			start = match.rm_so;
+			end = match.rm_eo;
+			return true;
+		}
+		return false;
+	}
+
+private:
+	regex_t m_regex;
+};
+
 class DIRINFO {
 public:
 	DIRINFO() : mydirectory(false) {}
@@ -195,23 +218,17 @@ public:
 		return *a < *b;
 	}
 
-	bool match(const char *search) const { int off; return match(search, off); }
-	bool match(const char *search, int &off) const
+	bool match(const SPY_REGEX *search) const
 	{
-		if (!search || !*search)
+		int hlstart, hlend;
+		return match(search, hlstart, hlend);
+	}
+	bool match(const SPY_REGEX *search, int &hlstart, int &hlend) const
+	{
+		if (!search)
 			return false;
 
-		if (RELAXCASE)
-		{
-			off = ci_find_substr(myname, search);
-		}
-		else
-		{
-			off = myname.find(search);
-			if (off == std::string::npos)
-				off = -1;
-		}
-		return off >= 0;
+		return search->search(myname.c_str(), hlstart, hlend);
 	}
 
 private:
@@ -247,7 +264,7 @@ static int therows = 0;
 static int thecols = 0;
 
 // Search info
-static char *thesearch = 0;
+static std::unique_ptr<SPY_REGEX> thesearch;
 
 // Color info
 struct COLOR {
@@ -593,7 +610,7 @@ static void set_attrs(const DIRINFO &dir, bool curfile)
 	}
 }
 
-static void drawfile(int file, const char *incsearch)
+static void drawfile(int file, const SPY_REGEX *incsearch)
 {
 	int page, x, y;
 	filetopage(file, page, x, y);
@@ -612,12 +629,11 @@ static void drawfile(int file, const char *incsearch)
 	move(2+y, xoff+2);
 
 	int maxlen = SYSmax(COLS - (xoff+2), 0);
-	int off;
-	if (dir.match(incsearch, off) && (HLSEARCH || file == thecurfile))
+	int hlstart;
+	int hlend;
+	if (dir.match(incsearch, hlstart, hlend) &&
+			(HLSEARCH || file == thecurfile))
 	{
-		int hlstart = off;
-		int hlend = off + strlen(incsearch);
-
 		set_attrs(dir, file == thecurfile);
 
 		addnstr(dir.name().c_str(), SYSmin(hlstart, maxlen));
@@ -643,7 +659,7 @@ static void drawfile(int file, const char *incsearch)
 	move(2+y, xoff+1);
 }
 
-static void draw(const char *incsearch = 0)
+static void draw(const SPY_REGEX *incsearch = 0)
 {
 	char	username[BUFSIZE];
 	char	hostname[BUFSIZE];
@@ -738,7 +754,7 @@ static void searchnext()
 	int file;
 	for (file = nextfile(thecurfile); file != thecurfile; file = nextfile(file))
 	{
-		if (thefiles[file].match(thesearch))
+		if (thefiles[file].match(thesearch.get()))
 			break;
 	}
 
@@ -758,17 +774,18 @@ enum RLTYPE {
 template <RLTYPE TYPE>
 void spy_rl_display()
 {
-	if (TYPE == SEARCH)
+	if (TYPE == SEARCH && rl_line_buffer && *rl_line_buffer)
 	{
 		// Temporarily replace the current file to show what was found
 		int prevfile = thecurfile;
 
-		thesearch = rl_line_buffer;
+		thesearch.reset(new SPY_REGEX(rl_line_buffer));
 		searchnext();
 
-		draw(rl_line_buffer);
+		draw(thesearch.get());
 
-		thesearch = 0;
+		thesearch.reset(0);
+
 		thecurfile = prevfile;
 		filetopage();
 	}
@@ -854,8 +871,7 @@ static void search()
 {
 	if (thesearch)
 	{
-		free(thesearch);
-		thesearch = 0;
+		thesearch.reset(0);
 	}
 
 	// Configure readline
@@ -864,12 +880,19 @@ static void search()
 	history_set_history_state(&s_search_history);
 
 	// Read input
-	thesearch = readline("");
+	char *search = readline("");
 
-	if (thesearch && *thesearch)
+	if (search)
 	{
-		add_unique_history(thesearch);
-		s_search_history = *history_get_history_state();
+		if (*search)
+		{
+			add_unique_history(search);
+			s_search_history = *history_get_history_state();
+
+			thesearch.reset(new SPY_REGEX(search));
+		}
+
+		free(search);
 	}
 
 	searchnext();
