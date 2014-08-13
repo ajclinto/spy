@@ -971,14 +971,14 @@ static int thependingch = 0;
 template <bool prompt>
 static void execute_command(const char *command)
 {
-	endwin();
-
 	// Expand special characters
 	std::string expanded = expand_command(command);
 
-	// Leave the expanded command in the output stream
 	if (prompt)
 	{
+		endwin();
+
+		// Leave the expanded command in the output stream
 		tputs(s_md, 1, putchar);
 		tputs(tgoto(s_cm, 0, LINES-1), 1, putchar);
 		tputs("!", 1, putchar);
@@ -986,6 +986,12 @@ static void execute_command(const char *command)
 		tputs(s_me, 1, putchar);
 		tputs(s_ce, 1, putchar); // Necessary to clear lingering "Continue: "
 		tputs("\n", 1, putchar);
+	}
+	else
+	{
+		// Without leaving curses mode, reset the terminal to shell mode
+		// for the child
+		reset_shell_mode();
 	}
 
 	thechild = fork();
@@ -1027,9 +1033,7 @@ static void execute_command(const char *command)
 	}
 	else
 	{
-		// The child might have left garbage on the screen - schedule a
-		// clear with the next curses refresh().
-		clear();
+		endwin();
 	}
 }
 
