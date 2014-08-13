@@ -229,7 +229,7 @@ private:
 	bool mydirectory;
 };
 
-static const int BUFSIZE = 256;
+static const int BUFSIZE = 1024;
 
 // File/directory state
 static std::vector<DIRINFO> thefiles;
@@ -611,6 +611,7 @@ static void drawfile(int file, const char *incsearch)
 
 	move(2+y, xoff+2);
 
+	int maxlen = SYSmax(COLS - (xoff+2), 0);
 	int off;
 	if (dir.match(incsearch, off) && (HLSEARCH || file == thecurfile))
 	{
@@ -619,20 +620,22 @@ static void drawfile(int file, const char *incsearch)
 
 		set_attrs(dir, file == thecurfile);
 
-		addnstr(dir.name().c_str(), hlstart);
+		addnstr(dir.name().c_str(), SYSmin(hlstart, maxlen));
 
 		attrset(COLOR_PAIR(8));
 		attron(A_REVERSE);
-		addnstr(dir.name().c_str() + hlstart, hlend - hlstart);
+		addnstr(dir.name().c_str() + hlstart,
+				SYSmax(SYSmin(hlend - hlstart, maxlen - hlstart), 0));
 
 		set_attrs(dir, file == thecurfile);
 
-		addnstr(dir.name().c_str() + hlend, dir.name().length()-hlend);
+		addnstr(dir.name().c_str() + hlend,
+				SYSmax(SYSmin(dir.name().length() - hlend, maxlen - hlend), 0));
 	}
 	else
 	{
 		set_attrs(dir, file == thecurfile);
-		addstr(dir.name().c_str());
+		addnstr(dir.name().c_str(), maxlen);
 	}
 
 	set_attrs(dir, false);
@@ -644,6 +647,7 @@ static void draw(const char *incsearch = 0)
 {
 	char	username[BUFSIZE];
 	char	hostname[BUFSIZE];
+	char	title[BUFSIZE];
 
 	gethostname(hostname, BUFSIZE);
 	getlogin_r(username, BUFSIZE);
@@ -656,7 +660,8 @@ static void draw(const char *incsearch = 0)
 	attrset(A_NORMAL);
 
 	move(0, 0);
-	printw("%s@%s: %s", username, hostname, thecwd);
+	snprintf(title, BUFSIZE, "%s@%s: %s", username, hostname, thecwd);
+	addnstr(title, COLS);
 
 	if (thefiles.size())
 	{
