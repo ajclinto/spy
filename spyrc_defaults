@@ -21,6 +21,7 @@ map KEY_HOME firstfile
 map KEY_END lastfile
 map G lastfile
 
+map ^D quit
 map q quit
 map ' loadrc
 
