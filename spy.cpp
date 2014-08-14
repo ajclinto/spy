@@ -152,12 +152,12 @@ class SPY_REGEX {
 public:
 	SPY_REGEX(const char *pattern)
 	{
-		regcomp(&m_regex, pattern, RELAXCASE ? REG_ICASE : 0);
+		m_valid = !regcomp(&m_regex, pattern, RELAXCASE ? REG_ICASE : 0);
 	}
 	bool search(const char *str, int &start, int &end) const
 	{
 		regmatch_t match;
-		if (!regexec(&m_regex, str, 1, &match, 0))
+		if (m_valid && !regexec(&m_regex, str, 1, &match, 0))
 		{
 			start = match.rm_so;
 			end = match.rm_eo;
@@ -168,6 +168,7 @@ public:
 
 private:
 	regex_t m_regex;
+	bool m_valid;
 };
 
 class DIRINFO {
@@ -404,6 +405,15 @@ static void rebuild()
 	}
 
 	closedir(dp);
+}
+
+static void redraw()
+{
+	rebuild();
+
+	// Clear the screen for the next draw. This is for user-controlled redraw,
+	// which should clear any garbage left on the screen by background jobs.
+	clear();
 }
 
 static void ignoretoggle(const char *label)
@@ -1424,7 +1434,7 @@ int main(int argc, char *argv[])
 	commands["silent_cmd"] = execute_command_without_prompt;
 	commands["last_cmd"] = last_command;
 
-	commands["redraw"] = rebuild;
+	commands["redraw"] = redraw;
 
 	commands["loadrc"] = reload;
 
