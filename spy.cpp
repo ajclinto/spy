@@ -264,6 +264,9 @@ static int thepages = 0;
 static int therows = 0;
 static int thecols = 0;
 
+// Messages
+static std::string themsg;
+
 // Search info
 static std::unique_ptr<SPY_REGEX> thesearch;
 
@@ -498,7 +501,8 @@ static void jump_dir(const char *dir)
 
 	if (chdir(expanded.c_str()))
 	{
-		perror("chdir");
+		char	buf[BUFSIZE];
+		themsg = strerror_r(errno, buf, BUFSIZE);
 	}
 	else
 	{
@@ -689,6 +693,14 @@ static void draw(const SPY_REGEX *incsearch = 0)
 	snprintf(title, BUFSIZE, "%s@%s: %s", username, hostname, thecwd);
 	addnstr(title, COLS);
 
+	if (!themsg.empty())
+	{
+		move(LINES-1, 0);
+		attrset(A_REVERSE);
+		addnstr(themsg.c_str(), COLS);
+		attrset(A_NORMAL);
+	}
+
 	if (thefiles.size())
 	{
 		if (thepages > 1)
@@ -701,11 +713,12 @@ static void draw(const SPY_REGEX *incsearch = 0)
 		int maxfile = SYSmin((thecurpage+1) * thecols * therows, thefiles.size());
 		for (; file < maxfile; file++)
 		{
-			drawfile(file, incsearch);
+			if (file != thecurfile)
+				drawfile(file, incsearch);
 		}
 
-		// Draw the current file a second time to leave the cursor in the
-		// expected place
+		// Draw the current file last to leave the cursor in the expected
+		// place
 		drawfile(thecurfile, incsearch);
 	}
 	else
@@ -715,8 +728,14 @@ static void draw(const SPY_REGEX *incsearch = 0)
 	}
 }
 
-static void invalid()
+static void take()
 {
+	themsg = "take not implemented";
+}
+
+static void setenv()
+{
+	themsg = "setenv not implemented";
 }
 
 int spy_rl_getc(FILE *fp)
@@ -753,8 +772,20 @@ int spy_rl_getc(FILE *fp)
 
 static std::string lastjump = "~";
 
-static int nextfile(int file) { return file < thefiles.size()-1 ? file+1 : 0; }
+enum RLTYPE {
+	JUMP,
+	SEARCHNEXT,
+	SEARCHPREV,
+	EXECUTE
+};
 
+template <RLTYPE TYPE>
+static inline int nextfile(int file) { return file < thefiles.size()-1 ? file+1 : 0; }
+
+template <>
+inline int nextfile<SEARCHPREV>(int file) { return file > 0 ? file-1 : thefiles.size()-1; }
+
+template <RLTYPE TYPE>
 static void searchnext()
 {
 	if (!thesearch)
@@ -762,7 +793,7 @@ static void searchnext()
 
 	// Only search files other than thecurfile
 	int file;
-	for (file = nextfile(thecurfile); file != thecurfile; file = nextfile(file))
+	for (file = nextfile<TYPE>(thecurfile); file != thecurfile; file = nextfile<TYPE>(file))
 	{
 		if (thefiles[file].match(thesearch.get()))
 			break;
@@ -775,22 +806,17 @@ static void searchnext()
 	}
 }
 
-enum RLTYPE {
-	JUMP,
-	SEARCH,
-	EXECUTE
-};
-
 template <RLTYPE TYPE>
 void spy_rl_display()
 {
-	if (TYPE == SEARCH && rl_line_buffer && *rl_line_buffer)
+	if ((TYPE == SEARCHNEXT || TYPE == SEARCHPREV)
+	   	   && rl_line_buffer && *rl_line_buffer)
 	{
 		// Temporarily replace the current file to show what was found
 		int prevfile = thecurfile;
 
 		thesearch.reset(new SPY_REGEX(rl_line_buffer));
-		searchnext();
+		searchnext<TYPE>();
 
 		draw(thesearch.get());
 
@@ -814,7 +840,7 @@ void spy_rl_display()
 		addstr(lastjump.c_str());
 		addstr(") ");
 	}
-	else if (TYPE == SEARCH)
+	else if (TYPE == SEARCHNEXT || TYPE == SEARCHPREV)
 	{
 		addstr("/");
 	}
@@ -877,6 +903,7 @@ static void jump()
 	free(input);
 }
 
+template <RLTYPE TYPE>
 static void search()
 {
 	if (thesearch)
@@ -885,7 +912,7 @@ static void search()
 	}
 
 	// Configure readline
-	rl_redisplay_function = spy_rl_display<SEARCH>;
+	rl_redisplay_function = spy_rl_display<TYPE>;
 
 	history_set_history_state(&s_search_history);
 
@@ -905,7 +932,7 @@ static void search()
 		free(search);
 	}
 
-	searchnext();
+	searchnext<TYPE>();
 }
 
 static int getchar_unbuffered()
@@ -1421,12 +1448,12 @@ int main(int argc, char *argv[])
 	commands["lastfile"] = lastfile;
 
 	commands["quit"] = quit;
-	commands["invalid"] = invalid;
 
 	commands["jump"] = CALLBACK(jump, jump_dir);
 
-	commands["search"] = search;
-	commands["next"] = searchnext;
+	commands["search"] = search<SEARCHNEXT>;
+	commands["next"] = searchnext<SEARCHNEXT>;
+	commands["prev"] = searchnext<SEARCHPREV>;
 
 	commands["unix_cmd"] = execute;
 	commands["unix"] = execute_command_with_prompt;
@@ -1440,8 +1467,8 @@ int main(int argc, char *argv[])
 
 	commands["ignoretoggle"] = ignoretoggle;
 
-	commands["take"] = invalid;
-	commands["setenv"] = invalid;
+	commands["take"] = take;
+	commands["setenv"] = setenv;
 
 	std::map<int, CALLBACK> callbacks;
 
@@ -1494,10 +1521,20 @@ int main(int argc, char *argv[])
 			c = thependingch;
 			thependingch = 0;
 		}
+
+		themsg.clear();
 		
 		auto it = callbacks.find(c);
 		if (it != callbacks.end())
+		{
 			it->second();
+		}
+		else
+		{
+			char buf[BUFSIZE];
+			snprintf(buf, BUFSIZE, "Key '%s' [%d] undefined", keyname(c), c);
+			themsg = buf;
+		}
 	}
 
 	quit();
