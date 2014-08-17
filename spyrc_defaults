@@ -12,8 +12,8 @@ map d display
 map v enter
 map u climb
 
-map r pagedown
-map t pageup
+map ^F pagedown
+map ^B pageup
 map KEY_NPAGE pagedown
 map KEY_PPAGE pageup
 
@@ -24,8 +24,10 @@ map G lastfile
 map ^D quit
 map q quit
 map ' loadrc
+map KEY_ENTER redraw
 
 map g jump
+map J jump
 
 map / search
 map n next
