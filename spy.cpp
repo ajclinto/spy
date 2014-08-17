@@ -410,172 +410,6 @@ static void rebuild()
 	closedir(dp);
 }
 
-static void redraw()
-{
-	rebuild();
-
-	// Clear the screen for the next draw. This is for user-controlled redraw,
-	// which should clear any garbage left on the screen by background jobs.
-	clear();
-}
-
-static void ignoretoggle(const char *label)
-{
-	IGNOREMASK &mask = theignoremask[label+1];
-	mask.myenable = !mask.myenable;
-
-	rebuild();
-}
-
-static int ncols()
-{
-	if (thecurpage < thepages-1)
-		return thecols;
-
-	int files = thefiles.size() - thecurpage*thecols*therows;
-	return (files + therows - 1 - thecurrow) / therows;
-}
-
-static int nrows()
-{
-	if (thecurpage < thepages-1)
-		return therows;
-
-	int files = thefiles.size() - thecurpage*thecols*therows;
-	files -= thecurcol * therows;
-	if (files >= therows)
-		return therows;
-	if (files < 0)
-		return 0;
-	return files;
-}
-
-static void left()
-{
-	thecurcol--;
-	if (thecurcol < 0)
-		thecurcol = ncols()-1;
-	pagetofile();
-}
-
-static void right()
-{
-	thecurcol++;
-	if (thecurcol >= ncols())
-		thecurcol = 0;
-	pagetofile();
-}
-
-static void up()
-{
-	thecurrow--;
-	if (thecurrow < 0)
-		thecurrow = nrows()-1;
-	pagetofile();
-}
-
-static void down()
-{
-	thecurrow++;
-	if (thecurrow >= nrows())
-		thecurrow = 0;
-	pagetofile();
-}
-
-static void jump_dir(const char *dir)
-{
-	wordexp_t p;
-	wordexp(dir, &p, 0);
-
-	// Use the first valid expansion
-	std::string expanded;
-	for (int i = 0; i < p.we_wordc; i++)
-	{
-		if (p.we_wordv[i])
-		{
-			expanded = p.we_wordv[i];
-		}
-	}
-
-	wordfree(&p);
-
-	if (chdir(expanded.c_str()))
-	{
-		char	buf[BUFSIZE];
-		themsg = strerror_r(errno, buf, BUFSIZE);
-	}
-	else
-	{
-		rebuild();
-	}
-}
-
-static void dirup()
-{
-	jump_dir("..");
-}
-
-static void execute_command_without_prompt(const char *);
-static void execute_command_with_prompt(const char *);
-
-static void dirdown_enter()
-{
-	if (thefiles[thecurfile].isdirectory())
-		jump_dir(thefiles[thecurfile].name().c_str());
-	else
-	{
-		std::string cmd = s_editor ? s_editor : "vim";
-		cmd += " %";
-		execute_command_without_prompt(cmd.c_str());
-	}
-}
-
-static void dirdown_display()
-{
-	if (thefiles[thecurfile].isdirectory())
-		jump_dir(thefiles[thecurfile].name().c_str());
-	else
-	{
-		std::string cmd = s_pager ? s_pager : "less";
-		cmd += " %";
-		execute_command_without_prompt(cmd.c_str());
-	}
-}
-
-static void pageup()
-{
-	if (thecurpage > 0)
-	{
-		thecurpage--;
-		thecurfile -= therows * thecols;
-	}
-}
-static void pagedown()
-{
-	if (thecurpage < thepages-1)
-	{
-		thecurpage++;
-		thecurfile += therows * thecols;
-		if (thecurfile >= thefiles.size())
-		{
-			thecurfile = thefiles.size()-1;
-			filetopage();
-		}
-	}
-}
-
-static void firstfile()
-{
-	thecurfile = 0;
-	filetopage();
-}
-
-static void lastfile()
-{
-	thecurfile = thefiles.size() ? thefiles.size()-1 : 0;
-	filetopage();
-}
-
 static void set_attrs(const DIRINFO &dir, bool curfile)
 {
 	if (curfile)
@@ -728,6 +562,175 @@ static void draw(const SPY_REGEX *incsearch = 0)
 	}
 }
 
+static void redraw()
+{
+	rebuild();
+
+	// Clear the screen for the next draw. This is for user-controlled redraw,
+	// which should clear any garbage left on the screen by background jobs.
+	clear();
+}
+
+static void ignoretoggle(const char *label)
+{
+	IGNOREMASK &mask = theignoremask[label+1];
+	mask.myenable = !mask.myenable;
+
+	rebuild();
+}
+
+static int ncols()
+{
+	if (thecurpage < thepages-1)
+		return thecols;
+
+	int files = thefiles.size() - thecurpage*thecols*therows;
+	return (files + therows - 1 - thecurrow) / therows;
+}
+
+static int nrows()
+{
+	if (thecurpage < thepages-1)
+		return therows;
+
+	int files = thefiles.size() - thecurpage*thecols*therows;
+	files -= thecurcol * therows;
+	if (files >= therows)
+		return therows;
+	if (files < 0)
+		return 0;
+	return files;
+}
+
+static void left()
+{
+	thecurcol--;
+	if (thecurcol < 0)
+		thecurcol = ncols()-1;
+	pagetofile();
+}
+
+static void right()
+{
+	thecurcol++;
+	if (thecurcol >= ncols())
+		thecurcol = 0;
+	pagetofile();
+}
+
+static void up()
+{
+	thecurrow--;
+	if (thecurrow < 0)
+		thecurrow = nrows()-1;
+	pagetofile();
+}
+
+static void down()
+{
+	thecurrow++;
+	if (thecurrow >= nrows())
+		thecurrow = 0;
+	pagetofile();
+}
+
+static void jump_dir(const char *dir)
+{
+	wordexp_t p;
+	wordexp(dir, &p, 0);
+
+	// Use the first valid expansion
+	std::string expanded;
+	for (int i = 0; i < p.we_wordc; i++)
+	{
+		if (p.we_wordv[i])
+		{
+			expanded = p.we_wordv[i];
+		}
+	}
+
+	wordfree(&p);
+
+	if (chdir(expanded.c_str()))
+	{
+		char	buf[BUFSIZE];
+		themsg = strerror_r(errno, buf, BUFSIZE);
+	}
+	else
+	{
+		rebuild();
+	}
+
+	draw();
+	refresh();
+}
+
+static void dirup()
+{
+	jump_dir("..");
+}
+
+static void execute_command_without_prompt(const char *);
+static void execute_command_with_prompt(const char *);
+
+static void dirdown_enter()
+{
+	if (thefiles[thecurfile].isdirectory())
+		jump_dir(thefiles[thecurfile].name().c_str());
+	else
+	{
+		std::string cmd = s_editor ? s_editor : "vim";
+		cmd += " %";
+		execute_command_without_prompt(cmd.c_str());
+	}
+}
+
+static void dirdown_display()
+{
+	if (thefiles[thecurfile].isdirectory())
+		jump_dir(thefiles[thecurfile].name().c_str());
+	else
+	{
+		std::string cmd = s_pager ? s_pager : "less";
+		cmd += " %";
+		execute_command_without_prompt(cmd.c_str());
+	}
+}
+
+static void pageup()
+{
+	if (thecurpage > 0)
+	{
+		thecurpage--;
+		thecurfile -= therows * thecols;
+	}
+}
+static void pagedown()
+{
+	if (thecurpage < thepages-1)
+	{
+		thecurpage++;
+		thecurfile += therows * thecols;
+		if (thecurfile >= thefiles.size())
+		{
+			thecurfile = thefiles.size()-1;
+			filetopage();
+		}
+	}
+}
+
+static void firstfile()
+{
+	thecurfile = 0;
+	filetopage();
+}
+
+static void lastfile()
+{
+	thecurfile = thefiles.size() ? thefiles.size()-1 : 0;
+	filetopage();
+}
+
 static void take()
 {
 	themsg = "take not implemented";
@@ -738,12 +741,88 @@ static void setenv()
 	themsg = "setenv not implemented";
 }
 
+static int spy_getchar()
+{
+	int ch;
+
+	if (isendwin())
+	{
+		// Set raw mode for stdin temporarily so that we can read a single
+		// character of unbuffered input.
+		struct termios old_settings;
+		struct termios new_settings;
+
+		tcgetattr(0, &old_settings);
+
+		new_settings = old_settings;
+		cfmakeraw (&new_settings);
+		tcsetattr (0, TCSANOW, &new_settings);
+
+		ch = getchar();
+
+		tcsetattr (0, TCSANOW, &old_settings);
+
+		if (ch == '\n' || ch == '\r')
+			ch = '\n';
+
+		// Hack to allow the arrow keys and delete to work in vi insert mode.
+		// Unfortunately, this breaks ESC (you have to hit it twice)
+		if (ch == ESC && rl_editing_mode == 0)
+		{
+			int ch2 = getchar();
+			if (ch2 == '[')
+			{
+				int ch3 = getchar();
+				switch (ch3)
+				{
+					case 'A':
+						ch = KEY_UP; break;
+					case 'B':
+						ch = KEY_DOWN; break;
+					case 'C':
+						ch = KEY_RIGHT; break;
+					case 'D':
+						ch = KEY_LEFT; break;
+					case '3':
+						{
+							int ch4 = getchar();
+							if (ch4 == '~')
+							{
+								ch = KEY_DC;
+								break;
+							}
+							ungetc(ch4, stdin);
+						}
+					default:
+						ungetc(ch3, stdin);
+						ungetc(ch2, stdin);
+						break;
+				}
+			}
+			else
+			{
+				ungetc(ch2, stdin);
+			}
+		}
+	}
+	else
+	{
+		// Curses input
+		ch = getch();
+	}
+
+	return ch;
+}
+
 int spy_rl_getc(FILE *fp)
 {
-	int key = getch();
+	int key = spy_getchar();
+
 	switch (key)
 	{
+		case '\b':
 		case KEY_BACKSPACE:
+		case RUBOUT:
 			if (!rl_point)
 			{
 				// Backspace past the prompt cancels the command in spy
@@ -806,157 +885,6 @@ static void searchnext()
 	}
 }
 
-template <RLTYPE TYPE>
-void spy_rl_display()
-{
-	if ((TYPE == SEARCHNEXT || TYPE == SEARCHPREV)
-	   	   && rl_line_buffer && *rl_line_buffer)
-	{
-		// Temporarily replace the current file to show what was found
-		int prevfile = thecurfile;
-
-		thesearch.reset(new SPY_REGEX(rl_line_buffer));
-		searchnext<TYPE>();
-
-		draw(thesearch.get());
-
-		thesearch.reset(0);
-
-		thecurfile = prevfile;
-		filetopage();
-	}
-	else
-	{
-		draw();
-	}
-
-	attrset(A_NORMAL);
-
-	// Print the prompt
-	move(LINES-1, 0);
-	if (TYPE == JUMP)
-	{
-		addstr("Jump:  (");
-		addstr(lastjump.c_str());
-		addstr(") ");
-	}
-	else if (TYPE == SEARCHNEXT || TYPE == SEARCHPREV)
-	{
-		addstr("/");
-	}
-	else if (TYPE == EXECUTE)
-	{
-		addstr("!");
-	}
-
-	int off = getcurx(stdscr);
-
-	addstr(rl_line_buffer);
-
-	// Move to the cursor position
-	move(LINES-1, off + rl_point);
-
-	refresh();
-}
-
-static void add_unique_history(const char *command)
-{
-	int offset = history_search_pos(command, -1, where_history());
-
-	if (offset != -1)
-	{
-		HIST_ENTRY *entry = remove_history(offset);
-		free_history_entry(entry);
-	}
-
-	add_history(command);
-
-	// The method calls above seem to mess up the current history pointer,
-	// so restore it here.
-	history_set_pos(history_length-1);
-}
-
-static void jump()
-{
-	// Configure readline
-	rl_redisplay_function = spy_rl_display<JUMP>;
-
-	history_set_history_state(&s_jump_history);
-
-	// Read input
-	char *input = readline("");
-
-	if (!input)
-		return;
-
-	std::string dir = *input ? input : lastjump.c_str();
-
-	add_unique_history(dir.c_str());
-
-	s_jump_history = *history_get_history_state();
-
-	// Store the current directory
-	lastjump = thecwd;
-
-	jump_dir(dir.c_str());
-
-	free(input);
-}
-
-template <RLTYPE TYPE>
-static void search()
-{
-	if (thesearch)
-	{
-		thesearch.reset(0);
-	}
-
-	// Configure readline
-	rl_redisplay_function = spy_rl_display<TYPE>;
-
-	history_set_history_state(&s_search_history);
-
-	// Read input
-	char *search = readline("");
-
-	if (search)
-	{
-		if (*search)
-		{
-			add_unique_history(search);
-			s_search_history = *history_get_history_state();
-
-			thesearch.reset(new SPY_REGEX(search));
-		}
-
-		free(search);
-	}
-
-	searchnext<TYPE>();
-}
-
-static int getchar_unbuffered()
-{
-	// Set raw mode for stdin temporarily so that we can read a single
-	// character of unbuffered input.
-	struct termios old_settings;
-	struct termios new_settings;
-
-	tcgetattr(0, &old_settings);
-
-	new_settings = old_settings;
-	cfmakeraw (&new_settings);
-	tcsetattr (0, TCSANOW, &new_settings);
-
-	int ch = getchar();
-	if (ch == '\n' || ch == '\r')
-		ch = '\n';
-
-	tcsetattr (0, TCSANOW, &old_settings);
-
-	return ch;
-}
-
 static char s_termcap_buf[2048];
 
 static char *s_mr = 0;
@@ -978,6 +906,169 @@ static void init_termcap()
 	s_cm = tgetstr ("cm", &ptr); // Cursor movement
 }
 
+template <RLTYPE TYPE>
+void spy_rl_display()
+{
+	if (!isendwin())
+	{
+		if ((TYPE == SEARCHNEXT || TYPE == SEARCHPREV)
+			   && rl_line_buffer && *rl_line_buffer)
+		{
+			// Temporarily replace the current file to show what was found
+			int prevfile = thecurfile;
+
+			thesearch.reset(new SPY_REGEX(rl_line_buffer));
+			searchnext<TYPE>();
+
+			draw(thesearch.get());
+
+			thesearch.reset(0);
+
+			thecurfile = prevfile;
+			filetopage();
+		}
+		else
+		{
+			draw();
+		}
+
+		attrset(A_NORMAL);
+
+		// Print the prompt
+		move(LINES-1, 0);
+		addstr(rl_prompt);
+
+		int off = getcurx(stdscr);
+
+		addstr(rl_line_buffer);
+
+		// Move to the cursor position
+		move(LINES-1, off + rl_point);
+
+		refresh();
+	}
+	else
+	{
+		tputs(tgoto(s_cm, 0, LINES-1), 1, putchar);
+		tputs(s_ce, 1, putchar); // Necessary to clear lingering "Continue: "
+		tputs(rl_prompt, 1, putchar);
+		tputs(rl_line_buffer, 1, putchar);
+
+		// Move to the cursor position
+		tputs(tgoto(s_cm, strlen(rl_prompt) + rl_point, LINES-1), 1, putchar);
+	}
+}
+
+static void add_unique_history(const char *command)
+{
+	int offset = history_search_pos(command, -1, where_history());
+
+	if (offset != -1)
+	{
+		HIST_ENTRY *entry = remove_history(offset);
+		free_history_entry(entry);
+	}
+
+	add_history(command);
+
+	// The method calls above seem to mess up the current history pointer,
+	// so restore it here.
+	history_set_pos(history_length-1);
+}
+
+static void continue_prompt()
+{
+	tputs(tgoto(s_cm, 0, LINES-1), 1, putchar);
+	tputs(s_mr, 1, putchar);
+	tputs("Continue: ", 1, putchar);
+	tputs(s_me, 1, putchar);
+	tputs(s_ce, 1, putchar);
+}
+
+static bool cancel_prompt()
+{
+	if (!isendwin())
+	{
+		draw();
+		refresh();
+	}
+	else
+	{
+		continue_prompt();
+	}
+}
+
+static void jump()
+{
+	// Configure readline
+	rl_redisplay_function = spy_rl_display<JUMP>;
+
+	history_set_history_state(&s_jump_history);
+
+	// Read input
+	std::string prompt = "Jump:  (";
+	prompt += lastjump;
+	prompt += ") ";
+	char *input = readline(prompt.c_str());
+
+	if (!input)
+	{
+		cancel_prompt();
+		return;
+	}
+
+	std::string dir = *input ? input : lastjump.c_str();
+	free(input);
+
+	add_unique_history(dir.c_str());
+
+	s_jump_history = *history_get_history_state();
+
+	// Store the current directory
+	lastjump = thecwd;
+
+	jump_dir(dir.c_str());
+}
+
+template <RLTYPE TYPE>
+static void search()
+{
+	if (thesearch)
+	{
+		thesearch.reset(0);
+	}
+
+	// Configure readline
+	rl_redisplay_function = spy_rl_display<TYPE>;
+
+	history_set_history_state(&s_search_history);
+
+	// Read input
+	char *search = readline("/");
+
+	if (search)
+	{
+		if (*search)
+		{
+			add_unique_history(search);
+			s_search_history = *history_get_history_state();
+
+			thesearch.reset(new SPY_REGEX(search));
+		}
+
+		free(search);
+
+		searchnext<TYPE>();
+
+		draw();
+		refresh();
+	}
+	else
+	{
+		cancel_prompt();
+	}
+}
+
 // Expand special command characters
 static std::string expand_command(const char *command)
 {
@@ -988,22 +1079,6 @@ static std::string expand_command(const char *command)
 
 	return expanded;
 }
-
-static int continue_prompt()
-{
-	tputs(s_mr, 1, putchar);
-	tputs("Continue: ", 1, putchar);
-	tputs(s_me, 1, putchar);
-
-	int ch = getchar_unbuffered();
-
-	tputs(s_cr, 1, putchar);
-	tputs(s_ce, 1, putchar);
-
-	return ch;
-}
-
-static int thependingch = 0;
 
 template <bool prompt>
 static void execute_command(const char *command)
@@ -1066,7 +1141,7 @@ static void execute_command(const char *command)
 
 	if (prompt)
 	{
-		thependingch = continue_prompt();
+		continue_prompt();
 	}
 	else
 	{
@@ -1093,14 +1168,15 @@ static void execute()
 	history_set_history_state(&s_execute_history);
 
 	// Read input
-	char *command = readline("");
+	char *command = readline("!");
 
-	if (!command)
-		return;
-
-	if (!*command)
+	if (!command || !*command)
 	{
-		free(command);
+		cancel_prompt();
+
+		if (command)
+			free(command);
+
 		return;
 	}
 
@@ -1149,18 +1225,22 @@ public:
 	CALLBACK()
 		: myvfn(0)
 		, mysfn(0)
+		, mydraw(true)
 		{}
 	CALLBACK(VOIDFN fn)
 		: myvfn(fn)
 		, mysfn(0)
+		, mydraw(true)
 		{}
 	CALLBACK(STRFN fn)
 		: myvfn(0)
 		, mysfn(fn)
+		, mydraw(true)
 		{}
-	CALLBACK(VOIDFN vn, STRFN sn)
+	CALLBACK(VOIDFN vn, STRFN sn, bool draw)
 		: myvfn(vn)
 		, mysfn(sn)
+		, mydraw(draw)
 		{}
 
 	void operator()() const
@@ -1169,6 +1249,12 @@ public:
 			mysfn(mystr.c_str());
 		else
 			myvfn();
+
+		if (mydraw)
+		{
+			draw();
+			refresh();
+		}
 	}
 
 	bool has_vfn() const { return myvfn; }
@@ -1187,6 +1273,7 @@ private:
 	VOIDFN		myvfn;
 	STRFN		mysfn;
 	std::string	mystr;
+	bool		mydraw;
 };
 
 static void read_spyrc(std::istream &is,
@@ -1415,8 +1502,6 @@ static void init_curses()
 	rl_getc_function = spy_rl_getc;
 	rl_prep_term_function = spy_rl_prep_terminal;
 	rl_deprep_term_function = spy_rl_deprep_terminal;
-	rl_prompt = 0;
-	rl_already_prompted = 0;
 	rl_outstream = 0;
 	rl_completion_display_matches_hook = spy_rl_display_match_list;
 }
@@ -1449,15 +1534,15 @@ int main(int argc, char *argv[])
 
 	commands["quit"] = quit;
 
-	commands["jump"] = CALLBACK(jump, jump_dir);
+	commands["jump"] = CALLBACK(jump, jump_dir, false);
 
-	commands["search"] = search<SEARCHNEXT>;
+	commands["search"] = CALLBACK(search<SEARCHNEXT>, 0, false);
 	commands["next"] = searchnext<SEARCHNEXT>;
 	commands["prev"] = searchnext<SEARCHPREV>;
 
-	commands["unix_cmd"] = execute;
-	commands["unix"] = execute_command_with_prompt;
-	commands["command"] = execute_command_with_prompt;
+	commands["unix_cmd"] = CALLBACK(execute, 0, false);
+	commands["unix"] = CALLBACK(0, execute_command_with_prompt, false);
+	commands["command"] = CALLBACK(0, execute_command_with_prompt, false);
 	commands["silent_cmd"] = execute_command_without_prompt;
 	commands["last_cmd"] = last_command;
 
@@ -1498,6 +1583,9 @@ int main(int argc, char *argv[])
 	init_termcap();
 
 	rebuild();
+	draw();
+	refresh();
+
 	while (true)
 	{
 		if (theresized)
@@ -1508,25 +1596,12 @@ int main(int argc, char *argv[])
 			theresized = false;
 		}
 
-		draw();
-		refresh();
+		int c = spy_getchar();
 
-		int c;
-		if (!thependingch)
-		{
-			c = getch();
-		}
-		else
-		{
-			c = thependingch;
-			thependingch = 0;
-		}
-
-		themsg.clear();
-		
 		auto it = callbacks.find(c);
 		if (it != callbacks.end())
 		{
+			themsg.clear();
 			it->second();
 		}
 		else
@@ -1534,6 +1609,12 @@ int main(int argc, char *argv[])
 			char buf[BUFSIZE];
 			snprintf(buf, BUFSIZE, "Key '%s' [%d] undefined", keyname(c), c);
 			themsg = buf;
+
+			if (!isendwin())
+			{
+				draw();
+				refresh();
+			}
 		}
 	}
 
