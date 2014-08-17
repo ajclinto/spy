@@ -371,11 +371,17 @@ static void rebuild()
 {
 	// Get the directory listing
 	if (!getcwd(thecwd, sizeof(thecwd)))
-		exit(1);
+	{
+		themsg = "Could not get current directory";
+		return;
+	}
 
 	DIR *dp = opendir(thecwd);
 	if (dp == NULL)
-		exit(1);
+	{
+		themsg = "Could not get directory listing";
+		return;
+	}
 
 	thefiles.clear();
 
@@ -634,6 +640,25 @@ static void down()
 	pagetofile();
 }
 
+static void spy_chdir(const char *dir)
+{
+	if (chdir(dir))
+	{
+		char	buf[BUFSIZE];
+		themsg = strerror_r(errno, buf, BUFSIZE);
+	}
+	else
+	{
+		// Check if the directory really changed before invoking rebuild(),
+		// since special characters like '.' are handled directly by chdir.
+		char cwd[FILENAME_MAX];
+		if (getcwd(cwd, sizeof(cwd)) && strcmp(cwd, thecwd))
+		{
+			rebuild();
+		}
+	}
+}
+
 static void jump_dir(const char *dir)
 {
 	wordexp_t p;
@@ -651,15 +676,7 @@ static void jump_dir(const char *dir)
 
 	wordfree(&p);
 
-	if (chdir(expanded.c_str()))
-	{
-		char	buf[BUFSIZE];
-		themsg = strerror_r(errno, buf, BUFSIZE);
-	}
-	else
-	{
-		rebuild();
-	}
+	spy_chdir(expanded.c_str());
 
 	draw();
 	refresh();
@@ -1106,6 +1123,23 @@ static void execute_command(const char *command)
 		reset_shell_mode();
 	}
 
+	// Create a pipe to pass the result of pwd back from the child when
+	// it's done execution. The shell syntax only seems to work in bash,
+	// so exclude other shells.
+	const char	*bash = "/bin/bash";
+	const char	*shell = s_shell ? s_shell : bash;
+	const int	 shlen = strlen(shell);
+	const bool	 recover_cwd = shlen >= 4 && !strncmp(shell+shlen-4, "bash", 4);
+	int			 fd[2];
+
+	if (recover_cwd)
+	{
+		if (pipe(fd) < 0)
+		{
+			perror("pipe failed");
+		}
+	}
+
 	thechild = fork();
 	if (thechild == -1)
 	{
@@ -1114,12 +1148,21 @@ static void execute_command(const char *command)
 	else if (thechild == 0)
 	{
 		// Child
-		const char		*delim = " \t";
-		const char      *args[256];
-		int				 va_args = 0;
+		char		 buf[BUFSIZE];
+		const char	*delim = " \t";
+		const char	*args[256];
+		int			 va_args = 0;
+
+		if (recover_cwd)
+		{
+			// Append a command to pass the pwd up to the parent
+			close(fd[0]);
+			snprintf(buf, BUFSIZE, "\npwd >& %d", fd[1]);
+			expanded += buf;
+		}
 
 		// Execute commands in a subshell
-		args[va_args++] = s_shell ? s_shell : "/bin/bash";
+		args[va_args++] = shell;
 		args[va_args++] = "-c";
 		args[va_args++] = expanded.c_str();
 		args[va_args++] = 0;
@@ -1134,6 +1177,23 @@ static void execute_command(const char *command)
 	}
 
 	// Parent
+	if (recover_cwd)
+	{
+		close(fd[1]);
+
+		// Wait for the pwd
+		char	buf[BUFSIZE];
+		int		bytes = read(fd[0], buf, BUFSIZE);
+		if (bytes > 1)
+		{
+			buf[bytes-1] = '\0';
+			spy_chdir(buf);
+		}
+
+		close(fd[0]);
+	}
+
+	// Reap the child process
 	int status;
 	waitpid(thechild, &status, 0);
 
@@ -1204,7 +1264,15 @@ static char **theargv = 0;
 
 static void reload()
 {
-	endwin();
+	if (!isendwin())
+	{
+		endwin();
+	}
+	else
+	{
+		tputs(tgoto(s_cm, 0, LINES-1), 1, putchar);
+		tputs(s_ce, 1, putchar); // Necessary to clear lingering "Continue: "
+	}
 
 	if (chdir(theinitialcwd))
 		exit(1);
