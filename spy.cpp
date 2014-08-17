@@ -28,6 +28,8 @@
 
 #include "spyrc_defaults.h"
 
+#include "timer.h"
+
 // Compile time parameters (could be made settings)
 static const int XPADDING = 1;
 const bool RELAXCASE = true;
@@ -192,28 +194,37 @@ public:
 			return adir > bdir;
 
 		// Lexicographic compare that extracts integers and compares them
-		// as numbers
+		// as integers
 		const char *a = myname.c_str();
 		const char *b = rhs.myname.c_str();
 		while (*a && *b)
 		{
-			char ac = tolower(*a);
-			char bc = tolower(*b);
-			bool adigit = isdigit(ac);
-			bool bdigit = isdigit(bc);
-			if ((!adigit || !bdigit) && ac != bc)
-				return ac < bc;
+			char ac = *a;
+			char bc = *b;
 
-			if (adigit)
+			// Faster than tolower()
+			ac = (ac >= 'A' && ac <= 'Z') ? ac+32 : ac;
+			bc = (bc >= 'A' && bc <= 'Z') ? bc+32 : bc;
+
+			// Ignore leading zeros
+			bool adigit = ac > '0' && ac <= '9';
+			bool bdigit = bc > '0' && bc <= '9';
+
+			if (adigit && bdigit)
 			{
 				int aint = extract_integer(a);
 				int bint = extract_integer(b);
 				if (aint != bint)
 					return aint < bint;
 			}
+			else
+			{
+				if (ac != bc)
+					return ac < bc;
 
-			++a;
-			++b;
+				++a;
+				++b;
+			}
 		}
 
 		return *a < *b;
@@ -243,7 +254,7 @@ private:
 	}
 
 	std::string myname;
-	mutable std::shared_ptr<struct stat> mystat;
+	mutable std::unique_ptr<struct stat> mystat;
 	bool mydirectory;
 };
 
@@ -251,6 +262,7 @@ static const int BUFSIZE = 1024;
 
 // File/directory state
 static std::vector<DIRINFO> thefiles;
+static std::vector<int> thesorted;
 static char thecwd[FILENAME_MAX];
 
 // Current file/page
@@ -266,6 +278,7 @@ static int thecols = 0;
 
 // Messages
 static std::string themsg;
+static bool thedebugmode = false;
 
 // Search info
 static std::unique_ptr<SPY_REGEX> thesearch;
@@ -369,6 +382,11 @@ static void pagetofile()
 
 static void rebuild()
 {
+	TIMER	timer(false);
+	double	buildtime;
+	double	sorttime;
+	double	layouttime;
+
 	// Get the directory listing
 	if (!getcwd(thecwd, sizeof(thecwd)))
 	{
@@ -403,7 +421,13 @@ static void rebuild()
 		readdir_r(dp, &entry, &result);
 	}
 
+	if (thedebugmode)
+		buildtime = timer.elapsed();
+
 	std::sort(thefiles.begin(), thefiles.end());
+
+	if (thedebugmode)
+		sorttime = timer.elapsed();
 
 	layout(thefiles, LINES-3, COLS);
 
@@ -414,6 +438,18 @@ static void rebuild()
 	}
 
 	closedir(dp);
+
+	if (thedebugmode)
+	{
+		layouttime = timer.elapsed();
+
+		char buf[BUFSIZE];
+		sprintf(buf, "build time: %f sort time: %f layout time %f size: %d",
+				buildtime,
+				sorttime-buildtime,
+				layouttime-sorttime, sizeof(DIRINFO));
+		themsg = buf;
+	}
 }
 
 static void set_attrs(const DIRINFO &dir, bool curfile)
@@ -537,7 +573,7 @@ static void draw(const SPY_REGEX *incsearch = 0)
 	{
 		move(LINES-1, 0);
 		attrset(A_REVERSE);
-		addnstr(themsg.c_str(), COLS);
+		addnstr(themsg.c_str(), COLS-1);
 		attrset(A_NORMAL);
 	}
 
@@ -583,6 +619,11 @@ static void ignoretoggle(const char *label)
 	mask.myenable = !mask.myenable;
 
 	rebuild();
+}
+
+static void debugmode()
+{
+	thedebugmode = !thedebugmode;
 }
 
 static int ncols()
@@ -1259,7 +1300,6 @@ static void last_command()
 		execute_command_with_prompt(hist->line);
 }
 
-static char theinitialcwd[FILENAME_MAX];
 static char **theargv = 0;
 
 static void reload()
@@ -1274,8 +1314,6 @@ static void reload()
 		tputs(s_ce, 1, putchar); // Necessary to clear lingering "Continue: "
 	}
 
-	if (chdir(theinitialcwd))
-		exit(1);
 	if (execvp(theargv[0], (char * const *)theargv) == -1)
 	{
 		perror("exec failed");
@@ -1576,9 +1614,7 @@ static void init_curses()
 
 int main(int argc, char *argv[])
 {
-	// Retain the initial directory for reload()
-	if (!getcwd(theinitialcwd, sizeof(theinitialcwd)))
-		exit(1);
+	// Retain the initial arguments for reload()
 	theargv = argv;
 
 	signal(SIGINT, signal_handler);
@@ -1619,6 +1655,8 @@ int main(int argc, char *argv[])
 	commands["loadrc"] = reload;
 
 	commands["ignoretoggle"] = ignoretoggle;
+
+	commands["debugmode"] = debugmode;
 
 	commands["take"] = take;
 	commands["setenv"] = setenv;

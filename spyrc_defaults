@@ -25,6 +25,7 @@ map ^D quit
 map q quit
 map ' loadrc
 map KEY_ENTER redraw
+map KEY_RESIZE redraw
 
 map g jump
 map J jump
