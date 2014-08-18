@@ -271,6 +271,9 @@ static int thecurpage = 0;
 static int thecurcol = 0;
 static int thecurrow = 0;
 
+// Saved per-directory current file
+static std::map<std::string, int> thesavedcurfile;
+
 // Layout info
 static int thepages = 0;
 static int therows = 0;
@@ -432,10 +435,9 @@ static void rebuild()
 	layout(thefiles, LINES-3, COLS);
 
 	if (thecurfile >= thefiles.size())
-	{
 		thecurfile = thefiles.size() ? thefiles.size()-1 : 0;
-		filetopage();
-	}
+
+	filetopage();
 
 	closedir(dp);
 
@@ -444,10 +446,10 @@ static void rebuild()
 		layouttime = timer.elapsed();
 
 		char buf[BUFSIZE];
-		sprintf(buf, "build time: %f sort time: %f layout time %f size: %d",
+		sprintf(buf, "build time: %f sort time: %f layout time %f",
 				buildtime,
 				sorttime-buildtime,
-				layouttime-sorttime, sizeof(DIRINFO));
+				layouttime-sorttime);
 		themsg = buf;
 	}
 }
@@ -615,15 +617,24 @@ static void redraw()
 
 static void ignoretoggle(const char *label)
 {
-	IGNOREMASK &mask = theignoremask[label+1];
+	label++; // Skip '='
+	IGNOREMASK &mask = theignoremask[label];
 	mask.myenable = !mask.myenable;
 
 	rebuild();
+
+	themsg = mask.myenable ? "Enabled" : "Disabled";
+	themsg += " ignore mask '";
+	themsg += label;
+	themsg += "'";
 }
 
 static void debugmode()
 {
 	thedebugmode = !thedebugmode;
+
+	themsg = thedebugmode ? "Enabled" : "Disabled";
+	themsg += " debug mode";
 }
 
 static int ncols()
@@ -695,6 +706,13 @@ static void spy_chdir(const char *dir)
 		char cwd[FILENAME_MAX];
 		if (getcwd(cwd, sizeof(cwd)) && strcmp(cwd, thecwd))
 		{
+			// Save the current file and restore the previous, if it
+			// existed
+			thesavedcurfile[thecwd] = thecurfile;
+			auto it = thesavedcurfile.find(cwd);
+			if (it != thesavedcurfile.end())
+				thecurfile = it->second;
+
 			rebuild();
 		}
 	}
@@ -1298,6 +1316,8 @@ static void last_command()
 
 	if (hist)
 		execute_command_with_prompt(hist->line);
+	else
+		themsg = "No previous command";
 }
 
 static char **theargv = 0;
@@ -1648,7 +1668,7 @@ int main(int argc, char *argv[])
 	commands["unix"] = CALLBACK(0, execute_command_with_prompt, false);
 	commands["command"] = CALLBACK(0, execute_command_with_prompt, false);
 	commands["silent_cmd"] = execute_command_without_prompt;
-	commands["last_cmd"] = last_command;
+	commands["last_cmd"] = CALLBACK(last_command, 0, false);
 
 	commands["redraw"] = redraw;
 
