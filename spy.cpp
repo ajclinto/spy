@@ -713,7 +713,33 @@ static void spy_chdir(const char *dir)
 			if (it != thesavedcurfile.end())
 				thecurfile = it->second;
 
+			// Save a copy of the directory name that we were just in (for
+			// ".." handling below)
+			std::string prevcwd = thecwd;
+			size_t slashpos = prevcwd.rfind('/');
+			if (slashpos != std::string::npos)
+			{
+				slashpos++;
+				prevcwd = prevcwd.substr(slashpos,
+						prevcwd.length()-slashpos);
+			}
+
 			rebuild();
+
+			// Special case for ".." - in this case, I would like to see
+			// the directory that we just came from as the current file.
+			if (!strcmp(dir, ".."))
+			{
+				for (int file = 0; file < thefiles.size(); file++)
+				{
+					if (prevcwd == thefiles[file].name())
+					{
+						thecurfile = file;
+						filetopage();
+						break;
+					}
+				}
+			}
 		}
 	}
 }
