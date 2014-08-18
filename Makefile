@@ -1,8 +1,7 @@
 CC = g++
 
-CFLAGS = -g -O3 -std=c++0x
-
-LDFLAGS += -lncurses -lreadline
+CFLAGS = -O3 -std=c++0x
+LDFLAGS = -lncurses -lreadline
 
 # For -static (busted)
 #LDFLAGS += -lncurses -lreadline -ltinfo -lgpm
@@ -29,3 +28,9 @@ spy: $(objs)
 clean:
 	rm -f *.o *.d spyrc_defaults.h spy
 
+# Custom built ncurses
+# ./configure --with-shared --without-normal --without-debug --enable-sigwinch
+# ./configure --enable-sigwinch
+
+#CFLAGS = -Incurses/ncurses-5.9/include -g -std=c++0x
+#LDFLAGS = -Lncurses/ncurses-5.9/lib -lncurses_g -lreadline
