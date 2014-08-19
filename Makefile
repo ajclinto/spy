@@ -1,7 +1,7 @@
 CC = g++
 
 CFLAGS = -O3 -std=c++0x
-LDFLAGS = -lncurses -lreadline
+LDFLAGS = -lncurses -lreadline -lrt
 
 # For -static (busted)
 #LDFLAGS += -lncurses -lreadline -ltinfo -lgpm

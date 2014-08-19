@@ -1740,15 +1740,14 @@ int main(int argc, char *argv[])
 
 	while (true)
 	{
+		int c = spy_getchar();
+
 		if (theresized)
 		{
-			endwin();
-			refresh();
-			rebuild();
-			theresized = false;
+			struct winsize w;
+			ioctl(0, TIOCGWINSZ, &w);
+			resize_term(w.ws_row, w.ws_col);
 		}
-
-		int c = spy_getchar();
 
 		auto it = callbacks.find(c);
 		if (it != callbacks.end())
