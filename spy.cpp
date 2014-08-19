@@ -937,6 +937,7 @@ int spy_rl_getc(FILE *fp)
 			}
 			break;
 
+		case ERR:		key = 0; break;
 		case KEY_DC:    key = ESC; break;
 		//case KEY_DC:    key = 0; rl_delete(1, 0); break;
 
@@ -1699,7 +1700,7 @@ int main(int argc, char *argv[])
 	commands["unix_cmd"] = CALLBACK(execute, 0, false);
 	commands["unix"] = CALLBACK(0, execute_command_with_prompt, false);
 	commands["command"] = CALLBACK(0, execute_command_with_prompt, false);
-	commands["silent_cmd"] = execute_command_without_prompt;
+	commands["silent"] = execute_command_without_prompt;
 	commands["last_cmd"] = CALLBACK(last_command, 0, false);
 
 	commands["redraw"] = redraw;
