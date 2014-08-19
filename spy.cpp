@@ -1627,6 +1627,12 @@ static void init_curses()
 	// allow scrolling with the mouse wheel
 	scrollok(stdscr, true);
 
+	// Block for 1s in getch(). ERR is returned on timout, so we can handle
+	// resize events.
+	// NOTE: Even with a 1s timeout, curses seems to give us ERR keys
+	// faster than that while the window is being resized.
+	timeout(1000);
+
 	ESCDELAY = 0;
 
 	if (has_colors())
@@ -1742,12 +1748,21 @@ int main(int argc, char *argv[])
 	{
 		int c = spy_getchar();
 
-		if (theresized)
+		if (!isendwin() && theresized)
 		{
+			theresized = false;
+
 			struct winsize w;
 			ioctl(0, TIOCGWINSZ, &w);
 			resize_term(w.ws_row, w.ws_col);
+
+			redraw();
+			draw();
+			refresh();
 		}
+
+		if (c == ERR)
+			continue;
 
 		auto it = callbacks.find(c);
 		if (it != callbacks.end())
