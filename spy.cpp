@@ -78,21 +78,22 @@ static inline void replaceall_non_escaped(
 			str.replace(start_pos, 1, to);
 			start_pos += to.length();
 		}
+		else if (str[start_pos-1] == '\\')
+		{
+			str.replace(start_pos-1, 1, "");
+		}
+		else
+		{
+			start_pos++;
+		}
 	}
 }
 
+static void quit_prep();
+
 static void quit()
 {
-	endwin();
-
-	// Save command history
-	history_set_history_state(&s_execute_history);
-	if (write_history(s_historyfile.c_str()))
-	{
-		fprintf(stderr, "warning: Could not write history file %s\n",
-				s_historyfile.c_str());
-	}
-
+	quit_prep();
 	exit(0);
 }
 
@@ -1347,9 +1348,7 @@ static void last_command()
 		themsg = "No previous command";
 }
 
-static char **theargv = 0;
-
-static void reload()
+static void quit_prep()
 {
 	if (!isendwin())
 	{
@@ -1360,6 +1359,21 @@ static void reload()
 		tputs(tgoto(s_cm, 0, LINES-1), 1, putchar);
 		tputs(s_ce, 1, putchar); // Necessary to clear lingering "Continue: "
 	}
+
+	// Save command history
+	history_set_history_state(&s_execute_history);
+	if (write_history(s_historyfile.c_str()))
+	{
+		fprintf(stderr, "warning: Could not write history file %s\n",
+				s_historyfile.c_str());
+	}
+}
+
+static char **theargv = 0;
+
+static void reload()
+{
+	quit_prep();
 
 	if (execvp(theargv[0], (char * const *)theargv) == -1)
 	{
