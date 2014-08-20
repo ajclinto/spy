@@ -693,59 +693,60 @@ static void down()
 	pagetofile();
 }
 
-static void spy_chdir(const char *dir)
+static bool spy_chdir(const char *dir)
 {
 	if (chdir(dir))
 	{
 		char	buf[BUFSIZE];
 		themsg = strerror_r(errno, buf, BUFSIZE);
+		return false;
 	}
-	else
+
+	// Check if the directory really changed before invoking rebuild(),
+	// since special characters like '.' are handled directly by chdir.
+	char cwd[FILENAME_MAX];
+	if (!getcwd(cwd, sizeof(cwd)) || !strcmp(cwd, thecwd))
+		return false;
+
+	// Save the current file and restore the previous, if it
+	// existed
+	thesavedcurfile[thecwd] = thecurfile;
+	auto it = thesavedcurfile.find(cwd);
+	if (it != thesavedcurfile.end())
+		thecurfile = it->second;
+
+	// Save a copy of the directory name that we were just in (for
+	// ".." handling below)
+	std::string prevcwd = thecwd;
+	size_t slashpos = prevcwd.rfind('/');
+	if (slashpos != std::string::npos)
 	{
-		// Check if the directory really changed before invoking rebuild(),
-		// since special characters like '.' are handled directly by chdir.
-		char cwd[FILENAME_MAX];
-		if (getcwd(cwd, sizeof(cwd)) && strcmp(cwd, thecwd))
+		slashpos++;
+		prevcwd = prevcwd.substr(slashpos,
+				prevcwd.length()-slashpos);
+	}
+
+	rebuild();
+
+	// Special case for ".." - in this case, I would like to see
+	// the directory that we just came from as the current file.
+	if (!strcmp(dir, ".."))
+	{
+		for (int file = 0; file < thefiles.size(); file++)
 		{
-			// Save the current file and restore the previous, if it
-			// existed
-			thesavedcurfile[thecwd] = thecurfile;
-			auto it = thesavedcurfile.find(cwd);
-			if (it != thesavedcurfile.end())
-				thecurfile = it->second;
-
-			// Save a copy of the directory name that we were just in (for
-			// ".." handling below)
-			std::string prevcwd = thecwd;
-			size_t slashpos = prevcwd.rfind('/');
-			if (slashpos != std::string::npos)
+			if (prevcwd == thefiles[file].name())
 			{
-				slashpos++;
-				prevcwd = prevcwd.substr(slashpos,
-						prevcwd.length()-slashpos);
-			}
-
-			rebuild();
-
-			// Special case for ".." - in this case, I would like to see
-			// the directory that we just came from as the current file.
-			if (!strcmp(dir, ".."))
-			{
-				for (int file = 0; file < thefiles.size(); file++)
-				{
-					if (prevcwd == thefiles[file].name())
-					{
-						thecurfile = file;
-						filetopage();
-						break;
-					}
-				}
+				thecurfile = file;
+				filetopage();
+				break;
 			}
 		}
 	}
+
+	return true;
 }
 
-static void jump_dir(const char *dir)
+static bool spy_jump_dir(const char *dir)
 {
 	wordexp_t p;
 	wordexp(dir, &p, 0);
@@ -762,15 +763,25 @@ static void jump_dir(const char *dir)
 
 	wordfree(&p);
 
-	spy_chdir(expanded.c_str());
+	if (!spy_chdir(expanded.c_str()))
+		return false;
 
 	draw();
 	refresh();
+	return true;
+}
+
+static void jump_dir(const char *dir)
+{
+	spy_jump_dir(dir);
 }
 
 static void dirup()
 {
-	jump_dir("..");
+	if (!spy_jump_dir(".."))
+	{
+		themsg = "No parent directory";
+	}
 }
 
 static void execute_command_without_prompt(const char *);
@@ -778,9 +789,7 @@ static void execute_command_with_prompt(const char *);
 
 static void dirdown_enter()
 {
-	if (thefiles[thecurfile].isdirectory())
-		jump_dir(thefiles[thecurfile].name().c_str());
-	else
+	if (!spy_jump_dir(thefiles[thecurfile].name().c_str()))
 	{
 		std::string cmd = s_editor ? s_editor : "vim";
 		cmd += " %";
@@ -790,9 +799,7 @@ static void dirdown_enter()
 
 static void dirdown_display()
 {
-	if (thefiles[thecurfile].isdirectory())
-		jump_dir(thefiles[thecurfile].name().c_str());
-	else
+	if (!spy_jump_dir(thefiles[thecurfile].name().c_str()))
 	{
 		std::string cmd = s_pager ? s_pager : "less";
 		cmd += " %";
