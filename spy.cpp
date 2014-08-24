@@ -791,6 +791,7 @@ static void dirdown_enter()
 {
 	if (!spy_jump_dir(thefiles[thecurfile].name().c_str()))
 	{
+		themsg.clear();
 		std::string cmd = s_editor ? s_editor : "vim";
 		cmd += " %";
 		execute_command_without_prompt(cmd.c_str());
@@ -801,6 +802,7 @@ static void dirdown_display()
 {
 	if (!spy_jump_dir(thefiles[thecurfile].name().c_str()))
 	{
+		themsg.clear();
 		std::string cmd = s_pager ? s_pager : "less";
 		cmd += " %";
 		execute_command_without_prompt(cmd.c_str());
@@ -849,6 +851,10 @@ static void take()
 static void setenv()
 {
 	themsg = "setenv not implemented";
+}
+
+static void ignore()
+{
 }
 
 static int spy_getchar()
@@ -1055,6 +1061,14 @@ void spy_rl_display()
 
 		// Move to the cursor position
 		move(LINES-1, off + rl_point);
+
+		// TODO: If there was a way to detect vim insert mode, we should
+		// color the cursor here.
+#if 0
+		if (RL_ISSTATE(RL_STATE_VIMOTION) ||
+			RL_ISSTATE(RL_STATE_MULTIKEY))
+			chgat(1, A_NORMAL, 8, NULL);
+#endif
 
 		refresh();
 	}
@@ -1465,6 +1479,7 @@ static void read_spyrc(std::istream &is,
 
 	// There's probably another mapping we should use
 	keymap["<Enter>"] = '\n';
+	keymap["<Space>"] = ' ';
 
 	std::map<std::string, int> colormap;
 	colormap["black"] = COLOR_BLACK;
@@ -1684,6 +1699,7 @@ static void init_curses()
 	rl_deprep_term_function = spy_rl_deprep_terminal;
 	rl_outstream = 0;
 	rl_completion_display_matches_hook = spy_rl_display_match_list;
+	rl_readline_name = "spy";
 }
 
 int main(int argc, char *argv[])
@@ -1734,6 +1750,7 @@ int main(int argc, char *argv[])
 
 	commands["take"] = take;
 	commands["setenv"] = setenv;
+	commands["ignore"] = ignore;
 
 	std::map<int, CALLBACK> callbacks;
 

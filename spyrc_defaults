@@ -44,3 +44,5 @@ map % unix ./%
 
 map L unix ls -l %
 
+map KEY_BACKSPACE ignore
+map <Space> ignore
