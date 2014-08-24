@@ -263,7 +263,6 @@ static const int BUFSIZE = 1024;
 
 // File/directory state
 static std::vector<DIRINFO> thefiles;
-static std::vector<int> thesorted;
 static char thecwd[FILENAME_MAX];
 
 // Current file/page
@@ -1646,8 +1645,6 @@ static void spy_rl_deprep_terminal()
 
 static void init_curses()
 {
-	// Initialize curses
-
 	// Using newterm() instead of initscr() is supposed to avoid stdout
 	// buffering problems with child processes
 	newterm(getenv("TERM"), fopen("/dev/tty", "w"), fopen("/dev/tty", "r"));
@@ -1685,8 +1682,10 @@ static void init_curses()
 		// Inverted magenta for search coloring
 		init_pair(8, COLOR_MAGENTA, -1);
 	}
+}
 
-	// Initialize readline
+static void init_readline()
+{
 	s_jump_history = *history_get_history_state();
 	s_search_history = *history_get_history_state();
 
@@ -1694,18 +1693,18 @@ static void init_curses()
 	read_history(s_historyfile.c_str());
 	s_execute_history = *history_get_history_state();
 
-	// rl_initialize() sets the LC_CTYPE locale - set it back to the
-	// default "C" after the call:
-	// http://stackoverflow.com/questions/25457569/why-does-the-first-call-to-readline-slow-down-all-subsequent-calls-to-fnmatch
-	rl_initialize();
-	setlocale(LC_CTYPE, "C");
-
 	rl_getc_function = spy_rl_getc;
 	rl_prep_term_function = spy_rl_prep_terminal;
 	rl_deprep_term_function = spy_rl_deprep_terminal;
 	rl_outstream = 0;
 	rl_completion_display_matches_hook = spy_rl_display_match_list;
 	rl_readline_name = "spy";
+
+	// rl_initialize() sets the LC_CTYPE locale - set it back to the
+	// default "C" after the call:
+	// http://stackoverflow.com/questions/25457569/why-does-the-first-call-to-readline-slow-down-all-subsequent-calls-to-fnmatch
+	rl_initialize();
+	setlocale(LC_CTYPE, "C");
 }
 
 int main(int argc, char *argv[])
@@ -1782,8 +1781,9 @@ int main(int argc, char *argv[])
 			read_spyrc(is, commands, callbacks);
 	}
 
-	init_curses();
+	init_readline();
 	init_termcap();
+	init_curses();
 
 	rebuild();
 	draw();
