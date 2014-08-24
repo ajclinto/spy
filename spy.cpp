@@ -1694,6 +1694,12 @@ static void init_curses()
 	read_history(s_historyfile.c_str());
 	s_execute_history = *history_get_history_state();
 
+	// rl_initialize() sets the LC_CTYPE locale - set it back to the
+	// default "C" after the call:
+	// http://stackoverflow.com/questions/25457569/why-does-the-first-call-to-readline-slow-down-all-subsequent-calls-to-fnmatch
+	rl_initialize();
+	setlocale(LC_CTYPE, "C");
+
 	rl_getc_function = spy_rl_getc;
 	rl_prep_term_function = spy_rl_prep_terminal;
 	rl_deprep_term_function = spy_rl_deprep_terminal;
