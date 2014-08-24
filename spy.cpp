@@ -617,7 +617,6 @@ static void redraw()
 
 static void ignoretoggle(const char *label)
 {
-	label++; // Skip '='
 	IGNOREMASK &mask = theignoremask[label];
 	mask.myenable = !mask.myenable;
 
@@ -1256,7 +1255,6 @@ static void execute_command(const char *command)
 	{
 		// Child
 		char		 buf[BUFSIZE];
-		const char	*delim = " \t";
 		const char	*args[256];
 		int			 va_args = 0;
 
@@ -1409,23 +1407,27 @@ typedef void(*STRFN)(const char *);
 
 class CALLBACK {
 public:
-	CALLBACK()
-		: myvfn(0)
+	CALLBACK(const char *name = 0)
+		: myname(name)
+		, myvfn(0)
 		, mysfn(0)
 		, mydraw(true)
 		{}
-	CALLBACK(VOIDFN fn)
-		: myvfn(fn)
+	CALLBACK(const char *name, VOIDFN fn)
+		: myname(name)
+		, myvfn(fn)
 		, mysfn(0)
 		, mydraw(true)
 		{}
-	CALLBACK(STRFN fn)
-		: myvfn(0)
+	CALLBACK(const char *name, STRFN fn)
+		: myname(name)
+		, myvfn(0)
 		, mysfn(fn)
 		, mydraw(true)
 		{}
-	CALLBACK(VOIDFN vn, STRFN sn, bool draw)
-		: myvfn(vn)
+	CALLBACK(const char *name, VOIDFN vn, STRFN sn, bool draw)
+		: myname(name)
+		, myvfn(vn)
 		, mysfn(sn)
 		, mydraw(draw)
 		{}
@@ -1444,28 +1446,76 @@ public:
 		}
 	}
 
+	const char *name() const { return myname; }
+	const char *str() const { return mystr.c_str(); }
+
 	bool has_vfn() const { return myvfn; }
 	bool has_sfn() const { return mysfn; }
 
 	void set_str(const std::string &str)
 	{
-		// For some reason, .spyrc prefixes the jump directory with '='
-		if (mysfn == jump_dir)
+		// For some reason, .spyrc prefixes the jump_dir and ignoretoggle
+		// with '='
+		if (mysfn == jump_dir || mysfn == ignoretoggle)
 			mystr = std::string(str.begin()+1, str.end());
 		else
 			mystr = str;
 	}
 
 private:
-	VOIDFN		myvfn;
-	STRFN		mysfn;
-	std::string	mystr;
-	bool		mydraw;
+	const char	*myname;
+	VOIDFN		 myvfn;
+	STRFN		 mysfn;
+	std::string	 mystr;
+	bool		 mydraw;
 };
+
+static std::map<std::string, CALLBACK> thecommands;
+static std::map<int, CALLBACK> thekeys;
+
+static void help()
+{
+	// Without leaving curses mode, reset the terminal to shell mode
+	// for the child
+	reset_shell_mode();
+
+	FILE *pipe = popen("less", "w");
+
+	// Write
+	std::map<std::string, CALLBACK> unmapped = thecommands;
+	for (auto it = thekeys.begin(); it != thekeys.end(); ++it)
+	{
+		std::string key = "\'";
+		key += keyname(it->first);
+		key += "\'";
+
+		fprintf(pipe, "%-15s %-13s %-s\n",
+				key.c_str(),
+				it->second.name(),
+				it->second.str());
+
+		unmapped.erase(it->second.name());
+	}
+
+	if (!unmapped.empty())
+	{
+		fprintf(pipe, "\nCommands without a key mapping:\n");
+		for (auto it = unmapped.begin(); it != unmapped.end(); ++it)
+		{
+			fprintf(pipe, "%-15s %s\n", "", it->second.name());
+		}
+	}
+
+	pclose(pipe);
+
+	thechild = 0;
+
+	endwin();
+}
 
 static void read_spyrc(std::istream &is,
 		const std::map<std::string, CALLBACK> &commands,
-		std::map<int, CALLBACK> &callbacks)
+		std::map<int, CALLBACK> &keys)
 {
 	// Build a reverse map for all keys
 	std::map<std::string, int> keymap;
@@ -1558,7 +1608,7 @@ static void read_spyrc(std::istream &is,
 					fprintf(stderr, "warning: %s requires a string argument\n", command_it->first.c_str());
 			}
 
-			callbacks[key] = cb;
+			keys[key] = cb;
 		}
 		else if (cmd == "relaxprompt" ||
 				cmd == "relaxsearch" ||
@@ -1707,6 +1757,49 @@ static void init_readline()
 	setlocale(LC_CTYPE, "C");
 }
 
+static CALLBACK thecallbacks[] = {
+	CALLBACK("down", down),
+	CALLBACK("up", up),
+	CALLBACK("left", left),
+	CALLBACK("right", right),
+
+	CALLBACK("display", dirdown_display),
+	CALLBACK("enter", dirdown_enter),
+	CALLBACK("climb", dirup),
+
+	CALLBACK("pagedown", pagedown),
+	CALLBACK("pageup", pageup),
+	CALLBACK("firstfile", firstfile),
+	CALLBACK("lastfile", lastfile),
+
+	CALLBACK("quit", quit),
+
+	CALLBACK("jump", jump, jump_dir, false),
+
+	CALLBACK("search", search<SEARCHNEXT>, 0, false),
+	CALLBACK("next", searchnext<SEARCHNEXT>),
+	CALLBACK("prev", searchnext<SEARCHPREV>),
+
+	CALLBACK("unix_cmd", execute, 0, false),
+	CALLBACK("unix", 0, execute_command_with_prompt, false),
+	CALLBACK("silent", execute_command_without_prompt),
+	CALLBACK("last_cmd", last_command, 0, false),
+
+	CALLBACK("redraw", redraw),
+
+	CALLBACK("loadrc", reload),
+
+	CALLBACK("ignoretoggle", ignoretoggle),
+
+	CALLBACK("debugmode", debugmode),
+
+	CALLBACK("take", take),
+	CALLBACK("setenv", setenv),
+	CALLBACK("ignore", ignore),
+
+	CALLBACK("help", help),
+};
+
 int main(int argc, char *argv[])
 {
 	// Retain the initial arguments for reload()
@@ -1715,55 +1808,16 @@ int main(int argc, char *argv[])
 	signal(SIGINT, signal_handler);
 	signal(SIGWINCH, signal_resize);
 
-	std::map<std::string, CALLBACK> commands;
-
-	commands["down"] = down;
-	commands["up"] = up;
-	commands["left"] = left;
-	commands["right"] = right;
-
-	commands["display"] = dirdown_display;
-	commands["enter"] = dirdown_enter;
-	commands["climb"] = dirup;
-
-	commands["pagedown"] = pagedown;
-	commands["pageup"] = pageup;
-	commands["firstfile"] = firstfile;
-	commands["lastfile"] = lastfile;
-
-	commands["quit"] = quit;
-
-	commands["jump"] = CALLBACK(jump, jump_dir, false);
-
-	commands["search"] = CALLBACK(search<SEARCHNEXT>, 0, false);
-	commands["next"] = searchnext<SEARCHNEXT>;
-	commands["prev"] = searchnext<SEARCHPREV>;
-
-	commands["unix_cmd"] = CALLBACK(execute, 0, false);
-	commands["unix"] = CALLBACK(0, execute_command_with_prompt, false);
-	commands["command"] = CALLBACK(0, execute_command_with_prompt, false);
-	commands["silent"] = execute_command_without_prompt;
-	commands["last_cmd"] = CALLBACK(last_command, 0, false);
-
-	commands["redraw"] = redraw;
-
-	commands["loadrc"] = reload;
-
-	commands["ignoretoggle"] = ignoretoggle;
-
-	commands["debugmode"] = debugmode;
-
-	commands["take"] = take;
-	commands["setenv"] = setenv;
-	commands["ignore"] = ignore;
-
-	std::map<int, CALLBACK> callbacks;
+	for (int i = 0; i < sizeof(thecallbacks)/sizeof(CALLBACK); i++)
+	{
+		thecommands[thecallbacks[i].name()] = thecallbacks[i];
+	}
 
 	// Install default keybindings
 	{
 		std::stringstream is((const char *)spyrc_defaults);
 		if (is)
-			read_spyrc(is, commands, callbacks);
+			read_spyrc(is, thecommands, thekeys);
 	}
 
 	// Install user keybindings
@@ -1778,7 +1832,7 @@ int main(int argc, char *argv[])
 			is.open(dir);
 		}
 		if (is)
-			read_spyrc(is, commands, callbacks);
+			read_spyrc(is, thecommands, thekeys);
 	}
 
 	init_readline();
@@ -1809,8 +1863,8 @@ int main(int argc, char *argv[])
 		if (c == ERR)
 			continue;
 
-		auto it = callbacks.find(c);
-		if (it != callbacks.end())
+		auto it = thekeys.find(c);
+		if (it != thekeys.end())
 		{
 			themsg.clear();
 			it->second();
