@@ -42,7 +42,8 @@ static const char *s_editor = getenv("EDITOR");
 static const char *s_pager = getenv("PAGER");
 
 // History
-static const std::string s_historyfile = std::string(s_home) + "/.spy_history";
+static const std::string s_chistoryfile = std::string(s_home) + "/.spy_history";
+static const std::string s_jhistoryfile = std::string(s_home) + "/.spy_jumps";
 static HISTORY_STATE s_jump_history;
 static HISTORY_STATE s_search_history;
 static HISTORY_STATE s_execute_history;
@@ -761,17 +762,15 @@ static bool spy_jump_dir(const char *dir)
 
 	wordfree(&p);
 
-	if (!spy_chdir(expanded.c_str()))
-		return false;
-
-	draw();
-	refresh();
-	return true;
+	return spy_chdir(expanded.c_str());
 }
 
 static void jump_dir(const char *dir)
 {
 	spy_jump_dir(dir);
+
+	draw();
+	refresh();
 }
 
 static void dirup()
@@ -964,8 +963,6 @@ static int spy_rl_getc(FILE *fp)
 	return key;
 }
 
-static std::string lastjump = "~";
-
 enum RLTYPE {
 	JUMP,
 	SEARCHNEXT,
@@ -1084,19 +1081,20 @@ static void spy_rl_display()
 
 static void add_unique_history(const char *command)
 {
-	int offset = history_search_pos(command, -1, where_history());
-
-	if (offset != -1)
+	for (int i = history_length; i-- > 0; )
 	{
-		HIST_ENTRY *entry = remove_history(offset);
-		free_history_entry(entry);
+		// history_get() uses an offset of history_base
+		const char *line = history_get(i+history_base)->line;
+		if (!strcmp(line, command))
+		{
+			std::swap(
+					*history_get(history_base+i),
+					*history_get(history_base+history_length-1));
+			return;
+		}
 	}
 
 	add_history(command);
-
-	// The method calls above seem to mess up the current history pointer,
-	// so restore it here.
-	history_set_pos(history_length-1);
 }
 
 static void continue_prompt()
@@ -1121,12 +1119,44 @@ static bool cancel_prompt()
 	}
 }
 
+// Class to set and restore history state within a scope
+class HISTORY_SCOPE {
+public:
+	HISTORY_SCOPE(HISTORY_STATE &state) : mystate(state)
+	{
+		history_set_history_state(&mystate);
+	}
+	~HISTORY_SCOPE()
+	{
+		HISTORY_STATE *tmp = history_get_history_state();
+		mystate = *tmp;
+		free(tmp);
+	}
+
+private:
+	HISTORY_STATE &mystate;
+};
+
 static void jump()
 {
+	HISTORY_SCOPE scope(s_jump_history);
+
 	// Configure readline
 	rl_redisplay_function = spy_rl_display<JUMP>;
 
-	history_set_history_state(&s_jump_history);
+	// Try to find a good default jump target in the recent history, that
+	// isn't the cwd.
+	std::string lastjump = "~";
+	for (int i = history_length; i-- > 0; )
+	{
+		// history_get() uses an offset of history_base
+		const char *line = history_get(history_base+i)->line;
+		if (strcmp(line, thecwd))
+		{
+			lastjump = line;
+			break;
+		}
+	}
 
 	// Read input
 	std::string prompt = "Jump:  (";
@@ -1134,28 +1164,30 @@ static void jump()
 	prompt += ") ";
 	char *input = readline(prompt.c_str());
 
-	if (!input)
+	if (input)
+	{
+		std::string dir = *input ? input : lastjump;
+		free(input);
+
+		// Store the current directory
+		add_unique_history(thecwd);
+
+		spy_jump_dir(dir.c_str());
+
+		draw();
+		refresh();
+	}
+	else
 	{
 		cancel_prompt();
-		return;
 	}
-
-	std::string dir = *input ? input : lastjump.c_str();
-	free(input);
-
-	add_unique_history(dir.c_str());
-
-	s_jump_history = *history_get_history_state();
-
-	// Store the current directory
-	lastjump = thecwd;
-
-	jump_dir(dir.c_str());
 }
 
 template <RLTYPE TYPE>
 static void search()
 {
+	HISTORY_SCOPE scope(s_search_history);
+
 	if (thesearch)
 	{
 		thesearch.reset(0);
@@ -1163,8 +1195,6 @@ static void search()
 
 	// Configure readline
 	rl_redisplay_function = spy_rl_display<TYPE>;
-
-	history_set_history_state(&s_search_history);
 
 	// Read input
 	char *search = readline("/");
@@ -1174,7 +1204,6 @@ static void search()
 		if (*search)
 		{
 			add_unique_history(search);
-			s_search_history = *history_get_history_state();
 
 			thesearch.reset(new SPY_REGEX(search));
 		}
@@ -1327,10 +1356,10 @@ static void execute_command_without_prompt(const char *command)
 
 static void execute()
 {
+	HISTORY_SCOPE scope(s_execute_history);
+
 	// Configure readline
 	rl_redisplay_function = spy_rl_display<EXECUTE>;
-
-	history_set_history_state(&s_execute_history);
 
 	// Read input
 	char *command = readline("!");
@@ -1347,8 +1376,6 @@ static void execute()
 
 	add_unique_history(command);
 
-	s_execute_history = *history_get_history_state();
-
 	execute_command_with_prompt(command);
 
 	free(command);
@@ -1356,7 +1383,7 @@ static void execute()
 
 static void last_command()
 {
-	history_set_history_state(&s_execute_history);
+	HISTORY_SCOPE scope(s_execute_history);
 
 	const HIST_ENTRY *hist = current_history();
 
@@ -1378,12 +1405,31 @@ static void quit_prep()
 		tputs(s_ce, 1, putchar); // Necessary to clear lingering "Continue: "
 	}
 
-	// Save command history
-	history_set_history_state(&s_execute_history);
-	if (write_history(s_historyfile.c_str()))
+	// Save jump history
 	{
-		fprintf(stderr, "warning: Could not write history file %s\n",
-				s_historyfile.c_str());
+		HISTORY_SCOPE scope(s_jump_history);
+
+		// Add the cwd to the history first, since often I'll want to jump
+		// there upon restart
+		if (*thecwd)
+		{
+			add_unique_history(thecwd);
+		}
+		if (write_history(s_jhistoryfile.c_str()))
+		{
+			fprintf(stderr, "warning: Could not write history file %s\n",
+					s_jhistoryfile.c_str());
+		}
+	}
+
+	// Save command history
+	{
+		HISTORY_SCOPE scope(s_execute_history);
+		if (write_history(s_chistoryfile.c_str()))
+		{
+			fprintf(stderr, "warning: Could not write history file %s\n",
+					s_chistoryfile.c_str());
+		}
 	}
 }
 
@@ -1734,14 +1780,16 @@ static void init_curses()
 	}
 }
 
+static void load_history(const std::string &fname, HISTORY_STATE &state)
+{
+	HISTORY_SCOPE scope(state);
+	read_history(fname.c_str());
+}
+
 static void init_readline()
 {
-	s_jump_history = *history_get_history_state();
-	s_search_history = *history_get_history_state();
-
-	// Only execute history is stored to file
-	read_history(s_historyfile.c_str());
-	s_execute_history = *history_get_history_state();
+	load_history(s_jhistoryfile, s_jump_history);
+	load_history(s_chistoryfile, s_execute_history);
 
 	rl_getc_function = spy_rl_getc;
 	rl_prep_term_function = spy_rl_prep_terminal;
