@@ -32,14 +32,14 @@
 
 // Compile time parameters (could be made settings)
 static const int XPADDING = 1;
-const bool RELAXCASE = true;
-const bool HLSEARCH = false;
+static const bool RELAXCASE = true;
+static const bool HLSEARCH = false;
 
 // Environment
-const char *s_shell = getenv("SHELL");
-const char *s_home = getenv("HOME");
-const char *s_editor = getenv("EDITOR");
-const char *s_pager = getenv("PAGER");
+static const char *s_shell = getenv("SHELL");
+static const char *s_home = getenv("HOME");
+static const char *s_editor = getenv("EDITOR");
+static const char *s_pager = getenv("PAGER");
 
 // History
 static const std::string s_historyfile = std::string(s_home) + "/.spy_history";
@@ -125,7 +125,7 @@ struct ci_equal {
 };
 
 // find substring (case insensitive)
-int ci_find_substr(const std::string& str1, const std::string& str2)
+static int ci_find_substr(const std::string& str1, const std::string& str2)
 {
 	std::string::const_iterator it = std::search(
 			str1.begin(), str1.end(), 
@@ -928,7 +928,7 @@ static int spy_getchar()
 	return ch;
 }
 
-int spy_rl_getc(FILE *fp)
+static int spy_rl_getc(FILE *fp)
 {
 	int key = spy_getchar();
 
@@ -1022,7 +1022,7 @@ static void init_termcap()
 }
 
 template <RLTYPE TYPE>
-void spy_rl_display()
+static void spy_rl_display()
 {
 	if (!isendwin())
 	{
