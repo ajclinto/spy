@@ -40,6 +40,8 @@ map ; unix_cmd
 
 map . last_cmd
 
+map , show_cmd
+
 map % unix ./%
 
 map L unix ls -l %

@@ -1393,6 +1393,12 @@ static void last_command()
 		themsg = "No previous command";
 }
 
+static void show_command()
+{
+	endwin();
+	continue_prompt();
+}
+
 static void quit_prep()
 {
 	if (!isendwin())
@@ -1832,6 +1838,7 @@ static CALLBACK thecallbacks[] = {
 	CALLBACK("unix", 0, execute_command_with_prompt, false),
 	CALLBACK("silent", execute_command_without_prompt),
 	CALLBACK("last_cmd", last_command, 0, false),
+	CALLBACK("show_cmd", show_command, 0, false),
 
 	CALLBACK("redraw", redraw),
 
