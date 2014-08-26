@@ -927,6 +927,10 @@ static int spy_getchar()
 	return ch;
 }
 
+// Hackery to keep track of whether we're in vi command mode, since
+// readline does not provide this state flag.
+static bool thecommandmode = false;
+
 static int spy_rl_getc(FILE *fp)
 {
 	int key = spy_getchar();
@@ -948,8 +952,26 @@ static int spy_rl_getc(FILE *fp)
 			}
 			break;
 
-		case ERR:		key = 0; break;
-		case KEY_DC:    key = ESC; break;
+		case ERR:
+			key = 0;
+			break;
+
+		case 'a':
+		case 'A':
+		case 'i':
+		case 'I':
+		case 'c':
+		case 'C':
+		case 's':
+		case 'S':
+			thecommandmode = false;
+			break;
+
+		case ESC:
+		case KEY_DC:
+			key = ESC;
+			thecommandmode = true;
+			break;
 		//case KEY_DC:    key = 0; rl_delete(1, 0); break;
 
 		// For the rl_display function to be called, we have to return
@@ -1005,6 +1027,7 @@ static char *s_me = 0;
 static char *s_cr = 0;
 static char *s_ce = 0;
 static char *s_cm = 0;
+static char *s_cd = 0;
 
 static void init_termcap()
 {
@@ -1016,7 +1039,10 @@ static void init_termcap()
 	s_cr = tgetstr ("cr", &ptr); // Move to start of line
 	s_ce = tgetstr ("ce", &ptr); // Clear to end of line
 	s_cm = tgetstr ("cm", &ptr); // Cursor movement
+	s_cd = tgetstr ("cd", &ptr); // Clear to end of screen
 }
+
+static int thepromptline = 0;
 
 template <RLTYPE TYPE>
 static void spy_rl_display()
@@ -1057,25 +1083,30 @@ static void spy_rl_display()
 		// Move to the cursor position
 		move(LINES-1, off + rl_point);
 
-		// TODO: If there was a way to detect vim insert mode, we should
-		// color the cursor here.
-#if 0
-		if (RL_ISSTATE(RL_STATE_VIMOTION) ||
-			RL_ISSTATE(RL_STATE_MULTIKEY))
+		// Change the cursor color when we're in vi command mode
+		if (rl_editing_mode == 0 && thecommandmode)
 			chgat(1, A_NORMAL, 8, NULL);
-#endif
 
 		refresh();
 	}
 	else
 	{
-		tputs(tgoto(s_cm, 0, LINES-1), 1, putchar);
-		tputs(s_ce, 1, putchar); // Necessary to clear lingering "Continue: "
+		tputs(tgoto(s_cm, 0, thepromptline), 1, putchar);
+		tputs(s_cd, 1, putchar); // Necessary to clear lingering "Continue: "
 		tputs(rl_prompt, 1, putchar);
 		tputs(rl_line_buffer, 1, putchar);
 
+		thepromptline = SYSmin(thepromptline, (LINES-1) -
+			((strlen(rl_prompt) + strlen(rl_line_buffer) + 1) / COLS));
+
+		int thecurscol = strlen(rl_prompt) + rl_point;
+		int thecursline = thecurscol / COLS;
+
+		thecurscol -= thecursline * COLS;
+		thecursline += thepromptline;
+
 		// Move to the cursor position
-		tputs(tgoto(s_cm, strlen(rl_prompt) + rl_point, LINES-1), 1, putchar);
+		tputs(tgoto(s_cm, thecurscol, thecursline), 1, putchar);
 	}
 }
 
@@ -1244,12 +1275,14 @@ static void execute_command(const char *command)
 
 		// Leave the expanded command in the output stream
 		tputs(s_md, 1, putchar);
-		tputs(tgoto(s_cm, 0, LINES-1), 1, putchar);
+		tputs(tgoto(s_cm, 0, thepromptline), 1, putchar);
 		tputs("!", 1, putchar);
 		tputs(expanded.c_str(), 1, putchar);
 		tputs(s_me, 1, putchar);
 		tputs(s_ce, 1, putchar); // Necessary to clear lingering "Continue: "
 		tputs("\n", 1, putchar);
+
+		thepromptline = LINES-1;
 	}
 	else
 	{
@@ -1385,7 +1418,7 @@ static void last_command()
 {
 	HISTORY_SCOPE scope(s_execute_history);
 
-	const HIST_ENTRY *hist = current_history();
+	const HIST_ENTRY *hist = history_get(history_base+history_length-1);
 
 	if (hist)
 		execute_command_with_prompt(hist->line);
@@ -1739,6 +1772,8 @@ static void spy_rl_display_match_list (char **matches, int len, int max)
 
 static void spy_rl_prep_terminal(int)
 {
+	thecommandmode = false;
+	thepromptline = LINES-1;
 }
 
 static void spy_rl_deprep_terminal()
