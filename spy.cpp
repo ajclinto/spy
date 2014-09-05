@@ -1115,13 +1115,13 @@ static void add_unique_history(const char *command)
 	for (int i = history_length; i-- > 0; )
 	{
 		// history_get() uses an offset of history_base
-		const char *line = history_get(i+history_base)->line;
+		const char *line = history_get(history_base+i)->line;
 		if (!strcmp(line, command))
 		{
-			std::swap(
-					*history_get(history_base+i),
-					*history_get(history_base+history_length-1));
-			return;
+			HIST_ENTRY *hist = remove_history(i);
+			free(hist->line);
+			free(hist);
+			break;
 		}
 	}
 
@@ -1421,9 +1421,16 @@ static void last_command()
 	const HIST_ENTRY *hist = history_get(history_base+history_length-1);
 
 	if (hist)
+	{
 		execute_command_with_prompt(hist->line);
+	}
 	else
+	{
 		themsg = "No previous command";
+		
+		draw();
+		refresh();
+	}
 }
 
 static void show_command()
