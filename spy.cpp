@@ -185,6 +185,12 @@ public:
 	bool isdirectory() const { return mydirectory; }
 	void setdirectory() { mydirectory = true; }
 
+	void setdirectory_from_stat()
+	{
+		lazy_stat();
+		mydirectory = S_ISDIR(mystat->st_mode);
+	}
+
 	bool isexecute() const { lazy_stat(); return mystat->st_mode & S_IXUSR; }
 	bool iswrite() const { lazy_stat(); return mystat->st_mode & S_IWUSR; }
 
@@ -420,7 +426,13 @@ static void rebuild()
 			thefiles.back().setname(entry.d_name);
 
 			if (entry.d_type == DT_DIR)
+			{
 				thefiles.back().setdirectory();
+			}
+			else if (entry.d_type == DT_UNKNOWN)
+			{
+				thefiles.back().setdirectory_from_stat();
+			}
 		}
 		readdir_r(dp, &entry, &result);
 	}
