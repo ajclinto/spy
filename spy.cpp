@@ -804,7 +804,7 @@ enum PROMPT_TYPE {
 	// immediately after the command completes. This allows for interactive
 	// commands to use the terminal but to return immediately to curses
 	// mode when they complete.
-	PROMPT_SILENT_INTERACTIVE,
+	PROMPT_INTERACTIVE,
 
 	// Leave curses mode and wait for input before returning to curses
 	// mode. This mode shows the 'continue' prompt in termcap, without
@@ -1690,6 +1690,10 @@ static void help()
 	FILE *pipe = popen("less", "w");
 
 	// Write
+	fprintf(pipe, "Shell: %s\n", s_shell ? s_shell : "/bin/bash");
+	fprintf(pipe, "\n");
+
+	fprintf(pipe, "Key mappings:\n");
 	std::map<std::string, CALLBACK> unmapped = thecommands;
 	for (auto it = thekeys.begin(); it != thekeys.end(); ++it)
 	{
@@ -1993,12 +1997,16 @@ static CALLBACK thecallbacks[] = {
 	CALLBACK("prev", searchnext<SEARCHPREV>),
 
 	CALLBACK("unix_cmd", execute, 0, false),
+
 	CALLBACK("unix", 0, execute_command<PROMPT_CONTINUE>, false),
-	CALLBACK("silent", 0, execute_command<PROMPT_SILENT>, false),
+	CALLBACK("unix_silent", 0, execute_command<PROMPT_SILENT>, false),
+	CALLBACK("unix_interactive", 0, execute_command<PROMPT_INTERACTIVE>, false),
+	CALLBACK("prompt", 0, prompt_command<PROMPT_CONTINUE>, false),
+	CALLBACK("prompt_silent", 0, prompt_command<PROMPT_SILENT>, false),
+	CALLBACK("prompt_interactive", 0, prompt_command<PROMPT_INTERACTIVE>, false),
+
 	CALLBACK("last_cmd", last_command, 0, false),
 	CALLBACK("show_cmd", show_command, 0, false),
-	CALLBACK("prompt", 0, prompt_command<PROMPT_CONTINUE>, false),
-	CALLBACK("prompt_silent", 0, prompt_command<PROMPT_SILENT_INTERACTIVE>, false),
 
 	CALLBACK("redraw", redraw),
 
