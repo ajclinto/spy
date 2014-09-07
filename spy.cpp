@@ -728,24 +728,25 @@ static bool spy_chdir(const char *dir)
 
 	// Save a copy of the directory name that we were just in (for
 	// ".." handling below)
-	std::string prevcwd = thecwd;
-	size_t slashpos = prevcwd.rfind('/');
+	std::string prevdir = thecwd;
+	std::string prevparent;
+	const size_t slashpos = prevdir.rfind('/');
 	if (slashpos != std::string::npos)
 	{
-		slashpos++;
-		prevcwd = prevcwd.substr(slashpos,
-				prevcwd.length()-slashpos);
+		prevparent = prevdir.substr(0, slashpos);
+		prevdir = prevdir.substr(slashpos+1, prevdir.length()-slashpos-1);
 	}
 
 	rebuild();
 
 	// Special case for ".." - in this case, I would like to see
 	// the directory that we just came from as the current file.
-	if (!strcmp(dir, ".."))
+	if (!strcmp(dir, "..") ||
+		!strcmp(dir, prevparent.c_str()))
 	{
 		for (int file = 0; file < thefiles.size(); file++)
 		{
-			if (prevcwd == thefiles[file].name())
+			if (prevdir == thefiles[file].name())
 			{
 				thecurfile = file;
 				filetopage();
@@ -793,8 +794,26 @@ static void dirup()
 	}
 }
 
-static void execute_command_without_prompt(const char *);
-static void execute_command_with_prompt(const char *);
+enum PROMPT_TYPE {
+	// Stay in curses mode after executing the command. If there was
+	// output, it won't be visible. This mode should only be used for
+	// commands that don't require user input.
+	PROMPT_SILENT,
+
+	// Leave curses mode to show output, but return to curses mode
+	// immediately after the command completes. This allows for interactive
+	// commands to use the terminal but to return immediately to curses
+	// mode when they complete.
+	PROMPT_SILENT_INTERACTIVE,
+
+	// Leave curses mode and wait for input before returning to curses
+	// mode. This mode shows the 'continue' prompt in termcap, without
+	// returning to curses mode - so that the command output is visible
+	// even after the command completes.
+	PROMPT_CONTINUE
+};
+
+template <PROMPT_TYPE> static void execute_command(const char *);
 
 static void dirdown_enter()
 {
@@ -803,7 +822,7 @@ static void dirdown_enter()
 		themsg.clear();
 		std::string cmd = s_editor ? s_editor : "vim";
 		cmd += " %";
-		execute_command_without_prompt(cmd.c_str());
+		execute_command<PROMPT_SILENT>(cmd.c_str());
 	}
 }
 
@@ -814,7 +833,7 @@ static void dirdown_display()
 		themsg.clear();
 		std::string cmd = s_pager ? s_pager : "less";
 		cmd += " %";
-		execute_command_without_prompt(cmd.c_str());
+		execute_command<PROMPT_SILENT>(cmd.c_str());
 	}
 }
 
@@ -1140,10 +1159,15 @@ static void add_unique_history(const char *command)
 	add_history(command);
 }
 
-static void continue_prompt()
+static void continue_prompt(const char *status = 0)
 {
 	tputs(tgoto(s_cm, 0, LINES-1), 1, putchar);
 	tputs(s_mr, 1, putchar);
+	if (status && *status)
+	{
+		tputs(status, 1, putchar);
+		tputs(". ", 1, putchar);
+	}
 	tputs("Continue: ", 1, putchar);
 	tputs(s_me, 1, putchar);
 	tputs(s_ce, 1, putchar);
@@ -1275,13 +1299,31 @@ static std::string expand_command(const char *command)
 	return expanded;
 }
 
-template <bool prompt>
+static std::string elide_string(const std::string &str, int size)
+{
+	std::string elided;
+	if (str.size() > size)
+	{
+		if (size > 3)
+		{
+			elided = str.substr(0, size-3);
+			elided += "...";
+		}
+	}
+	else
+	{
+		elided = str;
+	}
+	return elided;
+}
+
+template <PROMPT_TYPE prompt>
 static void execute_command(const char *command)
 {
 	// Expand special characters
 	std::string expanded = expand_command(command);
 
-	if (prompt)
+	if (prompt != PROMPT_SILENT)
 	{
 		endwin();
 
@@ -1336,7 +1378,7 @@ static void execute_command(const char *command)
 		{
 			// Append a command to pass the pwd up to the parent
 			close(fd[0]);
-			snprintf(buf, BUFSIZE, "\npwd >& %d", fd[1]);
+			snprintf(buf, BUFSIZE, " && pwd >& %d", fd[1]);
 			expanded += buf;
 		}
 
@@ -1378,25 +1420,59 @@ static void execute_command(const char *command)
 
 	thechild = 0;
 
-	if (prompt)
+	// If the exit status was non-zero, print some information about what
+	// caused the process to exit.
+	std::string status_string;
+	if (WIFEXITED(status))
 	{
-		continue_prompt();
+		int exit_status = WEXITSTATUS(status);
+		if (exit_status)
+		{
+			char buf[BUFSIZE];
+			snprintf(buf, BUFSIZE, "Exit status %d", exit_status);
+			status_string = buf;
+		}
+	}
+	else if (WIFSIGNALED(status))
+	{
+		if (WCOREDUMP(status))
+		{
+			status_string = "Core dumped";
+		}
+		else
+		{
+			char buf[BUFSIZE];
+			snprintf(buf, BUFSIZE, "Terminated by '%s'", strsignal(WTERMSIG(status)));
+			status_string = buf;
+		}
+	}
+
+	// Prepend the command string
+	if (!status_string.empty())
+	{
+		std::string elided = elide_string(expanded, COLS-50);
+
+		if (!elided.empty())
+		{
+			status_string = elided + ": " + status_string;
+		}
+	}
+
+	if (prompt == PROMPT_CONTINUE)
+	{
+		continue_prompt(status_string.c_str());
 	}
 	else
 	{
-		endwin();
+		if (prompt == PROMPT_SILENT)
+			endwin();
+
+		if (!status_string.empty())
+			themsg = status_string;
+
+		draw();
+		refresh();
 	}
-}
-
-
-static void execute_command_with_prompt(const char *command)
-{
-	execute_command<true>(command);
-}
-
-static void execute_command_without_prompt(const char *command)
-{
-	execute_command<false>(command);
 }
 
 static void execute()
@@ -1421,9 +1497,37 @@ static void execute()
 
 	add_unique_history(command);
 
-	execute_command_with_prompt(command);
+	execute_command<PROMPT_CONTINUE>(command);
 
 	free(command);
+}
+
+template <PROMPT_TYPE prompt>
+static void prompt_command(const char *base)
+{
+	HISTORY_SCOPE scope(s_execute_history);
+
+	// Configure readline
+	rl_redisplay_function = spy_rl_display<EXECUTE>;
+
+	// Read input
+	std::string command = base;
+	char *args = readline((command + ": ").c_str());
+
+	if (!args)
+	{
+		cancel_prompt();
+		return;
+	}
+
+	command += " ";
+	command += args;
+
+	add_unique_history(command.c_str());
+
+	execute_command<prompt>(command.c_str());
+
+	free(args);
 }
 
 static void last_command()
@@ -1434,7 +1538,7 @@ static void last_command()
 
 	if (hist)
 	{
-		execute_command_with_prompt(hist->line);
+		execute_command<PROMPT_CONTINUE>(hist->line);
 	}
 	else
 	{
@@ -1889,10 +1993,12 @@ static CALLBACK thecallbacks[] = {
 	CALLBACK("prev", searchnext<SEARCHPREV>),
 
 	CALLBACK("unix_cmd", execute, 0, false),
-	CALLBACK("unix", 0, execute_command_with_prompt, false),
-	CALLBACK("silent", execute_command_without_prompt),
+	CALLBACK("unix", 0, execute_command<PROMPT_CONTINUE>, false),
+	CALLBACK("silent", 0, execute_command<PROMPT_SILENT>, false),
 	CALLBACK("last_cmd", last_command, 0, false),
 	CALLBACK("show_cmd", show_command, 0, false),
+	CALLBACK("prompt", 0, prompt_command<PROMPT_CONTINUE>, false),
+	CALLBACK("prompt_silent", 0, prompt_command<PROMPT_SILENT_INTERACTIVE>, false),
 
 	CALLBACK("redraw", redraw),
 
