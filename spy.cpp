@@ -1299,24 +1299,6 @@ static std::string expand_command(const char *command)
 	return expanded;
 }
 
-static std::string elide_string(const std::string &str, int size)
-{
-	std::string elided;
-	if (str.size() > size)
-	{
-		if (size > 3)
-		{
-			elided = str.substr(0, size-3);
-			elided += "...";
-		}
-	}
-	else
-	{
-		elided = str;
-	}
-	return elided;
-}
-
 static const char *signalname(int signal)
 {
 	switch (signal)
@@ -1484,17 +1466,6 @@ static void execute_command(const char *command)
 			char buf[BUFSIZE];
 			snprintf(buf, BUFSIZE, "Terminated by %s", signalname(WTERMSIG(status)));
 			status_string = buf;
-		}
-	}
-
-	// Prepend the command string
-	if (!status_string.empty())
-	{
-		std::string elided = elide_string(expanded, COLS-50);
-
-		if (!elided.empty())
-		{
-			status_string = elided + ": " + status_string;
 		}
 	}
 
