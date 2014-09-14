@@ -112,14 +112,14 @@ static void quit()
 
 static void signal_handler(int sig)
 {
-	if (thechild)
+	// The first SIGINT should only kill the child process, if it exists.
+	if (thechild && sig == SIGINT)
 	{
 		kill(thechild, sig);
 	}
 	else
 	{
-		if (sig == SIGINT)
-			quit();
+		quit();
 	}
 }
 
@@ -1524,7 +1524,7 @@ static void execute_command(const char *command)
 		tputs("!", 1, putchar);
 		tputs(expanded.c_str(), 1, putchar);
 		tputs(s_me, 1, putchar);
-		tputs(s_ce, 1, putchar); // Necessary to clear lingering "Continue: "
+		tputs(s_ce, 1, putchar);
 		tputs("\n", 1, putchar);
 
 		thepromptline = LINES-1;
@@ -2210,6 +2210,7 @@ int main(int argc, char *argv[])
 	theargv = argv;
 
 	signal(SIGINT, signal_handler);
+	signal(SIGTERM, signal_handler);
 	signal(SIGWINCH, signal_resize);
 
 	for (int i = 0; i < sizeof(thecallbacks)/sizeof(CALLBACK); i++)
@@ -2266,6 +2267,13 @@ int main(int argc, char *argv[])
 
 		if (c == ERR)
 			continue;
+
+		if (isendwin())
+		{
+			// Clear the continue prompt
+			tputs(s_cr, 1, putchar);
+			tputs(s_ce, 1, putchar);
+		}
 
 		auto it = thekeys.find(c);
 		if (it != thekeys.end())
