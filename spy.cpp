@@ -51,6 +51,18 @@ static HISTORY_STATE s_execute_history;
 // Child process
 static int thechild = 0;
 
+// Details mode
+enum DETAIL_TYPE {
+	DETAIL_NONE,
+	DETAIL_SIZE,
+	DETAIL_TIME,
+	DETAIL_MAX
+};
+
+DETAIL_TYPE thedetail = DETAIL_NONE;
+static int thedetailsizewidth = 0;
+static const int thedetailtimewidth = 18;
+
 static inline int SYSmax(int a, int b) { return a > b ? a : b; }
 static inline int SYSmin(int a, int b) { return a < b ? a : b; }
 
@@ -194,12 +206,34 @@ public:
 	bool isexecute() const { lazy_stat(); return mystat->st_mode & S_IXUSR; }
 	bool iswrite() const { lazy_stat(); return mystat->st_mode & S_IWUSR; }
 
+	size_t size() const { lazy_stat(); return mystat->st_size; }
+	time_t modtime() const { lazy_stat(); return mystat->st_mtime; }
+
 	bool operator<(const DIRINFO &rhs) const
 	{
 		bool adir = isdirectory();
 		bool bdir = rhs.isdirectory();
 		if (adir != bdir)
 			return adir > bdir;
+
+		if (!adir)
+		{
+			switch (thedetail)
+			{
+				case DETAIL_SIZE:
+					if (size() != rhs.size())
+					{
+						return size() > rhs.size();
+					}
+					break;
+				case DETAIL_TIME:
+					if (modtime() != rhs.modtime())
+					{
+						return modtime() > rhs.modtime();
+					}
+					break;
+			}
+		}
 
 		// Lexicographic compare that extracts integers and compares them
 		// as integers
@@ -279,7 +313,7 @@ static int thecurcol = 0;
 static int thecurrow = 0;
 
 // Saved per-directory current file
-static std::map<std::string, int> thesavedcurfile;
+static std::map<std::string, std::string> thesavedcurfile;
 
 // Layout info
 static int thepages = 0;
@@ -356,12 +390,45 @@ static bool ignored(const char *name)
 	return false;
 }
 
+static int itoawidth(size_t size)
+{
+	int width = 0;
+	while (size)
+	{
+		width++;
+		size /= 10;
+	}
+	return SYSmax(width, 1);
+}
+
 static void layout(const std::vector<DIRINFO> &dirs, int ysize, int xsize)
 {
 	int maxwidth = 0;
 	for (int i = 0; i < dirs.size(); i++)
 	{
-		maxwidth = SYSmax(maxwidth, dirs[i].name().length() + 2);
+		maxwidth = SYSmax(maxwidth, dirs[i].name().length());
+	}
+
+	maxwidth += XPADDING;
+	switch (thedetail)
+	{
+		case DETAIL_NONE:
+			maxwidth += 2;
+			break;
+		case DETAIL_SIZE:
+			{
+				size_t maxsize = 0;
+				for (int i = 0; i < dirs.size(); i++)
+				{
+					maxsize = SYSmax(maxsize, dirs[i].size());
+				}
+				thedetailsizewidth = itoawidth(maxsize);
+				maxwidth += thedetailsizewidth+2;
+			}
+			break;
+		case DETAIL_TIME:
+			maxwidth += thedetailtimewidth+2;
+			break;
 	}
 
 	therows = SYSmax(ysize, 1);
@@ -390,6 +457,20 @@ static void filetopage()
 static void pagetofile()
 { pagetofile(thecurfile, thecurpage, thecurcol, thecurrow); }
 
+// Set the current file to the one matching the given name, if it exists
+static void find_and_set_curfile(const std::string &name)
+{
+	for (int file = 0; file < thefiles.size(); file++)
+	{
+		if (name == thefiles[file].name())
+		{
+			thecurfile = file;
+			filetopage();
+			break;
+		}
+	}
+}
+
 static void rebuild()
 {
 	TIMER	timer(false);
@@ -410,6 +491,11 @@ static void rebuild()
 		themsg = "Could not get directory listing";
 		return;
 	}
+
+	// Save the current file name
+	std::string prevfile;
+	if (thecurfile < thefiles.size())
+		prevfile = thefiles[thecurfile].name();
 
 	thefiles.clear();
 
@@ -446,6 +532,12 @@ static void rebuild()
 		sorttime = timer.elapsed();
 
 	layout(thefiles, LINES-3, COLS);
+
+	// Restore the current file if possible. This allows reordering (eg.
+	// toggling details or refreshing the directory) to preserve the
+	// selection.
+	if (!prevfile.empty())
+		find_and_set_curfile(prevfile);
 
 	if (thecurfile >= thefiles.size())
 		thecurfile = thefiles.size() ? thefiles.size()-1 : 0;
@@ -515,6 +607,21 @@ static void set_attrs(const DIRINFO &dir, bool curfile)
 	}
 }
 
+static void puttime(const char *format, struct tm &time)
+{
+	char date[BUFSIZE];
+
+	strftime(date, BUFSIZE, format, &time);
+	attrset(A_NORMAL);
+	addnstr(date, BUFSIZE);
+}
+
+static void putpunc(char c)
+{
+	attrset(COLOR_PAIR(4));
+	addch(c);
+}
+
 static void drawfile(int file, const SPY_REGEX *incsearch)
 {
 	int page, x, y;
@@ -524,16 +631,66 @@ static void drawfile(int file, const SPY_REGEX *incsearch)
 
 	const DIRINFO &dir = thefiles[file];
 
-	set_attrs(dir, false);
-	if (dir.isdirectory())
+	// Draw details
+	switch (thedetail)
 	{
-		move(2+y, xoff);
-		addch('*');
+		case DETAIL_NONE:
+			{
+				// Draw the '*' for directories
+				set_attrs(dir, false);
+				if (dir.isdirectory())
+				{
+					move(2+y, xoff);
+					addch('*');
+				}
+			}
+			xoff += 2;
+			break;
+		case DETAIL_SIZE:
+			{
+				// Draw the file size. Blocks of 3 digits will alternate in
+				// color.
+				bool color = true;
+				int i = 0;
+				size_t s = dir.size();
+				do
+				{
+					move(2+y, xoff+thedetailsizewidth-i-1);
+					if (!(i % 3))
+						color = !color;
+					attrset(color ? COLOR_PAIR(4) : A_NORMAL);
+					addch((s % 10) + '0');
+					s /= 10;
+					i++;
+				} while (s);
+			}
+			xoff += thedetailsizewidth+2;
+			break;
+		case DETAIL_TIME:
+			{
+				// Draw the modification time
+				time_t modtime = dir.modtime();
+				struct tm result;
+
+				localtime_r(&modtime, &result);
+
+				move(2+y, xoff);
+
+				puttime("%b %d", result);
+				putpunc('/');
+				puttime("%g %k", result);
+				putpunc(':');
+				puttime("%M", result);
+				putpunc(':');
+				puttime("%S", result);
+			}
+			xoff += thedetailtimewidth+2;
+			break;
 	}
 
-	move(2+y, xoff+2);
+	move(2+y, xoff);
 
-	int maxlen = SYSmax(COLS - (xoff+2), 0);
+	int maxlen = SYSmax(COLS - xoff, 0);
 	int hlstart;
 	int hlend;
 	if (dir.match(incsearch, hlstart, hlend) &&
@@ -561,7 +718,7 @@ static void drawfile(int file, const SPY_REGEX *incsearch)
 
 	set_attrs(dir, false);
 
-	move(2+y, xoff+1);
+	move(2+y, xoff-1);
 }
 
 static void draw(const SPY_REGEX *incsearch = 0)
@@ -639,6 +796,22 @@ static void ignoretoggle(const char *label)
 	themsg += " ignore mask '";
 	themsg += label;
 	themsg += "'";
+}
+
+static void detailtoggle()
+{
+	thedetail = (DETAIL_TYPE)((int)thedetail+1);
+	if (thedetail == DETAIL_MAX)
+		thedetail = DETAIL_NONE;
+
+	rebuild();
+
+	switch (thedetail)
+	{
+		case DETAIL_NONE: break;
+		case DETAIL_SIZE: themsg = "Sorted by file size"; break;
+		case DETAIL_TIME: themsg = "Sorted by modification time"; break;
+	}
 }
 
 static void debugmode()
@@ -719,12 +892,9 @@ static bool spy_chdir(const char *dir)
 	if (!getcwd(cwd, sizeof(cwd)) || !strcmp(cwd, thecwd))
 		return false;
 
-	// Save the current file and restore the previous, if it
-	// existed
-	thesavedcurfile[thecwd] = thecurfile;
-	auto it = thesavedcurfile.find(cwd);
-	if (it != thesavedcurfile.end())
-		thecurfile = it->second;
+	// Save the current file
+	if (thecurfile < thefiles.size())
+		thesavedcurfile[thecwd] = thefiles[thecurfile].name();
 
 	// Save a copy of the directory name that we were just in (for
 	// ".." handling below)
@@ -739,20 +909,19 @@ static bool spy_chdir(const char *dir)
 
 	rebuild();
 
-	// Special case for ".." - in this case, I would like to see
-	// the directory that we just came from as the current file.
 	if (!strcmp(dir, "..") ||
 		!strcmp(dir, prevparent.c_str()))
 	{
-		for (int file = 0; file < thefiles.size(); file++)
-		{
-			if (prevdir == thefiles[file].name())
-			{
-				thecurfile = file;
-				filetopage();
-				break;
-			}
-		}
+		// Special case for ".." - in this case, I would like to see
+		// the directory that we just came from as the current file.
+		find_and_set_curfile(prevdir);
+	}
+	else
+	{
+		// Restore the previous file, if it existed
+		auto it = thesavedcurfile.find(cwd);
+		if (it != thesavedcurfile.end())
+			find_and_set_curfile(it->second);
 	}
 
 	return true;
@@ -2024,6 +2193,7 @@ static CALLBACK thecallbacks[] = {
 	CALLBACK("loadrc", reload),
 
 	CALLBACK("ignoretoggle", ignoretoggle),
+	CALLBACK("detailtoggle", detailtoggle),
 
 	CALLBACK("debugmode", debugmode),
 
