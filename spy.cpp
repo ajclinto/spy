@@ -711,7 +711,11 @@ static void drawfile(int file, const SPY_REGEX *incsearch)
 				}
 				else if (difftime < 3600)
 				{
-					printw("   %3d:%02d", -(int)(difftime/60), (int)(difftime%60));
+					attrset(A_NORMAL);
+					printw("   %3d", -(int)(difftime/60));
+					putpunc(':');
+					attrset(A_NORMAL);
+					printw("%02d", (int)(difftime%60));
 				}
 				else
 				{
