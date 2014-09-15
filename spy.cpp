@@ -216,23 +216,20 @@ public:
 		if (adir != bdir)
 			return adir > bdir;
 
-		if (!adir)
+		switch (thedetail)
 		{
-			switch (thedetail)
-			{
-				case DETAIL_SIZE:
-					if (size() != rhs.size())
-					{
-						return size() > rhs.size();
-					}
-					break;
-				case DETAIL_TIME:
-					if (modtime() != rhs.modtime())
-					{
-						return modtime() > rhs.modtime();
-					}
-					break;
-			}
+			case DETAIL_SIZE:
+				if (size() != rhs.size())
+				{
+					return size() > rhs.size();
+				}
+				break;
+			case DETAIL_TIME:
+				if (modtime() != rhs.modtime())
+				{
+					return modtime() > rhs.modtime();
+				}
+				break;
 		}
 
 		// Lexicographic compare that extracts integers and compares them
@@ -670,19 +667,60 @@ static void drawfile(int file, const SPY_REGEX *incsearch)
 			{
 				// Draw the modification time
 				time_t modtime = dir.modtime();
-				struct tm result;
+				time_t nowtime = time(0);
+				time_t yestime = nowtime - 60*60*24;
+				struct tm modtm;
+				struct tm nowtm;
+				struct tm yestm;
 
-				localtime_r(&modtime, &result);
+				localtime_r(&modtime, &modtm);
+				localtime_r(&nowtime, &nowtm);
+				localtime_r(&yestime, &yestm);
 
 				move(2+y, xoff);
 
-				puttime("%b %d", result);
-				putpunc('/');
-				puttime("%g %k", result);
-				putpunc(':');
-				puttime("%M", result);
-				putpunc(':');
-				puttime("%S", result);
+				if (nowtm.tm_mday == modtm.tm_mday &&
+					nowtm.tm_mon == modtm.tm_mon &&
+					nowtm.tm_year == modtm.tm_year)
+				{
+					attrset(A_NORMAL);
+					addstr("    Today");
+				}
+				else if (yestm.tm_mday == modtm.tm_mday &&
+						 yestm.tm_mon == modtm.tm_mon &&
+						 yestm.tm_year == modtm.tm_year)
+				{
+					attrset(A_NORMAL);
+					addstr("Yesterday");
+				}
+				else
+				{
+					puttime("%b %d", modtm);
+					putpunc('/');
+					puttime("%g", modtm);
+				}
+
+				time_t difftime = nowtime - modtime;
+				if (difftime == 0)
+				{
+					printw("      now", (int)difftime);
+				}
+				else if (difftime < 60)
+				{
+					printw("      %03d", -(int)difftime);
+				}
+				else if (difftime < 3600)
+				{
+					printw("   %3d:%02d", -(int)(difftime/60), (int)(difftime%60));
+				}
+				else
+				{
+					puttime(" %k", modtm);
+					putpunc(':');
+					puttime("%M", modtm);
+					putpunc(':');
+					puttime("%S", modtm);
+				}
 			}
 			xoff += thedetailtimewidth+2;
 			break;
