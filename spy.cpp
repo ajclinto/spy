@@ -1499,13 +1499,32 @@ static void search()
 	}
 }
 
+static bool needs_quotes(const std::string &str)
+{
+	for (auto it = str.begin(); it != str.end(); ++it)
+	{
+		char c = *it;
+		if (!isalpha(c) && !isdigit(c) && c != '_' && c != '.')
+			return true;
+	}
+
+	return false;
+}
+
 // Expand special command characters
 static std::string expand_command(const char *command)
 {
 	std::string expanded = command;
 
 	if (thecurfile < thefiles.size())
-		replaceall_non_escaped(expanded, '%', thefiles[thecurfile].name());
+	{
+		std::string filename = thefiles[thecurfile].name();
+		if (needs_quotes(filename))
+		{
+			filename = std::string("'") + filename + "'";
+		}
+		replaceall_non_escaped(expanded, '%', filename);
+	}
 
 	return expanded;
 }
@@ -2289,6 +2308,8 @@ int main(int argc, char *argv[])
 	rebuild();
 	draw();
 	refresh();
+
+	thepromptline = LINES-1;
 
 	while (true)
 	{
