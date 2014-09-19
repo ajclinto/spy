@@ -2137,6 +2137,22 @@ static void read_spyrc(std::istream &is,
 
 			thecolors.push_back(COLOR(pattern, color_it->second));
 		}
+		else if (cmd == "path")
+		{
+			std::string envpath = getenv("PATH");
+			std::string path;
+
+			if (!(iss >> path))
+			{
+				fprintf(stderr, "warning: Missing path\n");
+			}
+			else
+			{
+				path += ":";
+				path += envpath;
+				setenv("PATH", path.c_str(), 1);
+			}
+		}
 		else
 		{
 			fprintf(stderr, "warning: Unrecognized command %s\n", cmd.c_str());
