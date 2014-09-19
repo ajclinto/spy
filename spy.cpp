@@ -205,6 +205,7 @@ public:
 
 	bool isexecute() const { lazy_stat(); return mystat->st_mode & S_IXUSR; }
 	bool iswrite() const { lazy_stat(); return mystat->st_mode & S_IWUSR; }
+	bool islink() const { lazy_stat(); return (mystat->st_mode & S_IFMT) == S_IFLNK; }
 
 	size_t size() const { lazy_stat(); return mystat->st_size; }
 	time_t modtime() const { lazy_stat(); return mystat->st_mtime; }
@@ -288,7 +289,10 @@ private:
 		if (!mystat)
 		{
 			mystat.reset(new struct stat);
-			stat(myname.c_str(), mystat.get());
+
+			// Use lstat rather than stat so that symbolic links are not
+			// followed, and we can get information about the link itself
+			lstat(myname.c_str(), mystat.get());
 		}
 	}
 
@@ -330,6 +334,7 @@ struct COLOR {
 		DIRECTORY,
 		EXECUTABLE,
 		READONLY,
+		LINK,
 		TAGGED,
 		PATTERN
 	};
@@ -343,6 +348,8 @@ struct COLOR {
 				mytype = EXECUTABLE;
 			else if (pattern == "-ro")
 				mytype = READONLY;
+			else if (pattern == "-link")
+				mytype = LINK;
 			else if (pattern == "-tagged")
 				mytype = TAGGED;
 			else
@@ -584,6 +591,12 @@ static void set_attrs(const DIRINFO &dir, bool curfile)
 					break;
 				case COLOR::READONLY:
 					if (!dir.isdirectory() && !dir.iswrite())
+					{
+						color = thecolors[i].mycolor;
+					}
+					break;
+				case COLOR::LINK:
+					if (dir.islink())
 					{
 						color = thecolors[i].mycolor;
 					}
@@ -971,20 +984,21 @@ static bool spy_chdir(const char *dir)
 
 static bool spy_jump_dir(const char *dir)
 {
+	std::string expanded = dir;
+
 	wordexp_t p;
-	wordexp(dir, &p, 0);
-
-	// Use the first valid expansion
-	std::string expanded;
-	for (int i = 0; i < p.we_wordc; i++)
+	if (!wordexp(dir, &p, 0))
 	{
-		if (p.we_wordv[i])
+		// Use the first valid expansion
+		for (int i = 0; i < p.we_wordc; i++)
 		{
-			expanded = p.we_wordv[i];
+			if (p.we_wordv[i])
+			{
+				expanded = p.we_wordv[i];
+			}
 		}
+		wordfree(&p);
 	}
-
-	wordfree(&p);
 
 	return spy_chdir(expanded.c_str());
 }
@@ -1504,7 +1518,7 @@ static bool needs_quotes(const std::string &str)
 	for (auto it = str.begin(); it != str.end(); ++it)
 	{
 		char c = *it;
-		if (!isalpha(c) && !isdigit(c) && c != '_' && c != '.')
+		if (!isalpha(c) && !isdigit(c) && c != '_' && c != '.' && c != '-')
 			return true;
 	}
 
