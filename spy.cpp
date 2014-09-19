@@ -1303,6 +1303,12 @@ static int thepromptline = 0;
 template <RLTYPE TYPE>
 static void spy_rl_display()
 {
+	int cmdlines = (strlen(rl_prompt) + strlen(rl_line_buffer)) / COLS;
+	int curscol = strlen(rl_prompt) + rl_point;
+	int cursline = curscol / COLS;
+
+	curscol -= cursline * COLS;
+
 	if (!isendwin())
 	{
 		if ((TYPE == SEARCHNEXT || TYPE == SEARCHPREV)
@@ -1329,15 +1335,12 @@ static void spy_rl_display()
 		attrset(A_NORMAL);
 
 		// Print the prompt
-		move(LINES-1, 0);
+		move(LINES-1-cmdlines, 0);
 		addstr(rl_prompt);
-
-		int off = getcurx(stdscr);
-
 		addstr(rl_line_buffer);
 
 		// Move to the cursor position
-		move(LINES-1, off + rl_point);
+		move(LINES-1-cmdlines+cursline, curscol);
 
 		// Change the cursor color when we're in vi command mode
 		if (rl_editing_mode == 0 && thecommandmode)
@@ -1352,17 +1355,11 @@ static void spy_rl_display()
 		tputs(rl_prompt, 1, putchar);
 		tputs(rl_line_buffer, 1, putchar);
 
-		thepromptline = SYSmin(thepromptline, (LINES-1) -
-			((strlen(rl_prompt) + strlen(rl_line_buffer) + 1) / COLS));
-
-		int thecurscol = strlen(rl_prompt) + rl_point;
-		int thecursline = thecurscol / COLS;
-
-		thecurscol -= thecursline * COLS;
-		thecursline += thepromptline;
+		thepromptline = SYSmin(thepromptline, (LINES-1) - cmdlines);
+		cursline += thepromptline;
 
 		// Move to the cursor position
-		tputs(tgoto(s_cm, thecurscol, thecursline), 1, putchar);
+		tputs(tgoto(s_cm, curscol, cursline), 1, putchar);
 	}
 }
 
@@ -2176,9 +2173,10 @@ static void init_curses()
 	cbreak(); // Accept characters immediately without waiting for NL
 	noecho(); // Don't echo input to the screen
 
-	// This is required to wrap long command lines. It does not actually
-	// allow scrolling with the mouse wheel
-	scrollok(stdscr, true);
+	// This is another way to wrap long command lines. However it seems to lead
+	// to inconsistent cursor position unless using clear() with each redraw,
+	// which produces flicker.
+	//scrollok(stdscr, true);
 
 	// Block for 1s in getch(). ERR is returned on timout, so we can handle
 	// resize events.
