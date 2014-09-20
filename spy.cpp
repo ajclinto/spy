@@ -2162,7 +2162,10 @@ static void read_spyrc(std::istream &is,
 
 static void spy_rl_display_match_list (char **matches, int len, int max)
 {
-	// TODO
+	if (!isendwin())
+		endwin();
+
+	rl_display_match_list(matches, len, max);
 }
 
 static void spy_rl_prep_terminal(int)
@@ -2173,6 +2176,32 @@ static void spy_rl_prep_terminal(int)
 
 static void spy_rl_deprep_terminal()
 {
+}
+
+static char *spy_rl_completion_matches(const char *str, int state)
+{
+	// Handle completion through '%'
+	if (thecurfile < thefiles.size())
+	{
+		std::string expanded = str;
+		const std::string &filename = thefiles[thecurfile].name();
+		replaceall_non_escaped(expanded, '%', filename);
+		if (expanded != str)
+		{
+			char *rval = rl_filename_completion_function(expanded.c_str(), state);
+			if (rval)
+			{
+				expanded = rval;
+				free(rval);
+				replaceall(expanded, filename, "%");
+				rval = strdup(expanded.c_str());
+			}
+
+			return rval;
+		}
+	}
+
+	return rl_filename_completion_function(str, state);
 }
 
 static void init_curses()
@@ -2231,9 +2260,9 @@ static void init_readline()
 	rl_getc_function = spy_rl_getc;
 	rl_prep_term_function = spy_rl_prep_terminal;
 	rl_deprep_term_function = spy_rl_deprep_terminal;
-	rl_outstream = 0;
 	rl_completion_display_matches_hook = spy_rl_display_match_list;
 	rl_readline_name = "spy";
+	rl_completion_entry_function = spy_rl_completion_matches;
 
 	// rl_initialize() sets the LC_CTYPE locale - set it back to the
 	// default "C" after the call:
@@ -2359,30 +2388,27 @@ int main(int argc, char *argv[])
 		if (c == ERR)
 			continue;
 
-		if (isendwin())
-		{
-			// Clear the continue prompt
-			tputs(s_cr, 1, putchar);
-			tputs(s_ce, 1, putchar);
-		}
-
 		auto it = thekeys.find(c);
 		if (it != thekeys.end())
 		{
+			if (isendwin())
+			{
+				// Clear the continue prompt
+				tputs(s_cr, 1, putchar);
+				tputs(s_ce, 1, putchar);
+			}
+
 			themsg.clear();
 			it->second();
 		}
-		else
+		else if (!isendwin())
 		{
 			char buf[BUFSIZE];
 			snprintf(buf, BUFSIZE, "Key '%s' [%d] undefined", keyname(c), c);
-			themsg = buf;
 
-			if (!isendwin())
-			{
-				draw();
-				refresh();
-			}
+			themsg = buf;
+			draw();
+			refresh();
 		}
 	}
 
