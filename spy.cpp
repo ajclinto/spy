@@ -1580,6 +1580,13 @@ static const char *signalname(int signal)
 	}
 }
 
+// Check if the shell name ends in csh. This will also catch tcsh.
+static bool iscsh(const char *shell)
+{
+	const int	 shlen = strlen(shell);
+	return shlen >= 3 && !strncmp(shell+shlen-3, "csh", 3);
+}
+
 template <PROMPT_TYPE prompt>
 static void execute_command(const char *command)
 {
@@ -1609,12 +1616,11 @@ static void execute_command(const char *command)
 	}
 
 	// Create a pipe to pass the result of pwd back from the child when
-	// it's done execution. The shell syntax only seems to work in bash,
-	// so exclude other shells.
+	// it's done execution. Exclude csh, since the shell syntax for referencing
+	// numbered fds is not available in this shell.
 	const char	*bash = "/bin/bash";
 	const char	*shell = s_shell ? s_shell : bash;
-	const int	 shlen = strlen(shell);
-	const bool	 recover_cwd = shlen >= 4 && !strncmp(shell+shlen-4, "bash", 4);
+	const bool	 recover_cwd = !iscsh(shell);
 	int			 fd[2];
 
 	if (recover_cwd)
