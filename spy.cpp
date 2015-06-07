@@ -1532,6 +1532,9 @@ static std::string expand_command(const char *command)
 		std::string filename = thefiles[thecurfile].name();
 		if (needs_quotes(filename))
 		{
+			// Use strong quoting (''). This means that if there's a ' in the
+			// string, we have to close and then re-open the quote.
+			replaceall(filename, "'", "'\\''");
 			filename = std::string("'") + filename + "'";
 		}
 		replaceall_non_escaped(expanded, '%', filename);

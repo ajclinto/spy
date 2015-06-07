@@ -1,4 +1,4 @@
-CC = g++
+CXX = g++
 
 CFLAGS = -O3 -std=c++0x
 LDFLAGS = -lncurses -lreadline -lrt
@@ -20,10 +20,10 @@ spy.o: spyrc_defaults.h
 objs = $(srcs:.cpp=.o)
 
 %.o: %.cpp Makefile
-	$(CC) $(CFLAGS) -c $<
+	$(CXX) $(CFLAGS) -c $<
 
 spy: $(objs)
-	$(CC) $(CFLAGS) $(objs) $(LDFLAGS) -o spy
+	$(CXX) $(CFLAGS) $(objs) $(LDFLAGS) -o spy
 
 clean:
 	rm -f *.o *.d spyrc_defaults.h spy
