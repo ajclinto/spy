@@ -306,6 +306,8 @@ static const int BUFSIZE = 1024;
 // File/directory state
 static std::vector<DIRINFO> thefiles;
 static char thecwd[FILENAME_MAX];
+static char theusername[BUFSIZE];
+static char thehostname[BUFSIZE];
 
 // Current file/page
 static int thecurfile = 0;
@@ -481,6 +483,10 @@ static void rebuild()
 	double	buildtime;
 	double	sorttime;
 	double	layouttime;
+
+	// Set the hostname and username
+	gethostname(thehostname, BUFSIZE);
+	getlogin_r(theusername, BUFSIZE);
 
 	// Get the directory listing
 	if (!getcwd(thecwd, sizeof(thecwd)))
@@ -778,12 +784,7 @@ static void drawfile(int file, const SPY_REGEX *incsearch)
 
 static void draw(const SPY_REGEX *incsearch = 0)
 {
-	char	username[BUFSIZE];
-	char	hostname[BUFSIZE];
 	char	title[BUFSIZE];
-
-	gethostname(hostname, BUFSIZE);
-	getlogin_r(username, BUFSIZE);
 
 	// Use erase() to clear the screen before drawing. Don't use clear(),
 	// since this will cause the next refresh() to clear the screen causing
@@ -793,7 +794,7 @@ static void draw(const SPY_REGEX *incsearch = 0)
 	attrset(A_NORMAL);
 
 	move(0, 0);
-	snprintf(title, BUFSIZE, "%s@%s: %s", username, hostname, thecwd);
+	snprintf(title, BUFSIZE, "%s@%s: %s", theusername, thehostname, thecwd);
 	addnstr(title, COLS);
 
 	if (!themsg.empty())
