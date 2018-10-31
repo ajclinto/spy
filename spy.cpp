@@ -1014,7 +1014,7 @@ static void jump_dir(const char *dir)
 
 static void dirup()
 {
-	if (!spy_jump_dir(".."))
+	if (!spy_chdir(".."))
 	{
 		themsg = "No parent directory";
 	}
@@ -1043,7 +1043,7 @@ template <PROMPT_TYPE> static void execute_command(const char *);
 
 static void dirdown_enter()
 {
-	if (!spy_jump_dir(thefiles[thecurfile].name().c_str()))
+	if (!spy_chdir(thefiles[thecurfile].name().c_str()))
 	{
 		themsg.clear();
 		std::string cmd = s_editor ? s_editor : "vim";
@@ -1054,7 +1054,7 @@ static void dirdown_enter()
 
 static void dirdown_display()
 {
-	if (!spy_jump_dir(thefiles[thecurfile].name().c_str()))
+	if (!spy_chdir(thefiles[thecurfile].name().c_str()))
 	{
 		themsg.clear();
 		std::string cmd = s_pager ? s_pager : "less";
