@@ -1591,6 +1591,14 @@ static bool iscsh(const char *shell)
 	return shlen >= 3 && !strncmp(shell+shlen-3, "csh", 3);
 }
 
+// Set theresized flag so that when curses is reentered the window size is set
+// correctly
+static void spy_endwin()
+{
+    endwin();
+    theresized = true;
+}
+
 template <PROMPT_TYPE prompt>
 static void execute_command(const char *command)
 {
@@ -1599,7 +1607,7 @@ static void execute_command(const char *command)
 
 	if (prompt != PROMPT_SILENT)
 	{
-		endwin();
+		spy_endwin();
 
 		// Leave the expanded command in the output stream
 		tputs(s_md, 1, putchar);
@@ -1727,7 +1735,7 @@ static void execute_command(const char *command)
 	else
 	{
 		if (prompt == PROMPT_SILENT)
-			endwin();
+			spy_endwin();
 
 		if (!status_string.empty())
 			themsg = status_string;
@@ -1813,7 +1821,7 @@ static void last_command()
 
 static void show_command()
 {
-	endwin();
+	spy_endwin();
 	continue_prompt();
 }
 
@@ -1821,7 +1829,7 @@ static void quit_prep()
 {
 	if (!isendwin())
 	{
-		endwin();
+		spy_endwin();
 	}
 	else
 	{
@@ -1984,7 +1992,7 @@ static void help()
 
 	thechild = 0;
 
-	endwin();
+	spy_endwin();
 }
 
 static void read_spyrc(std::istream &is,
@@ -2173,7 +2181,7 @@ static void read_spyrc(std::istream &is,
 static void spy_rl_display_match_list (char **matches, int len, int max)
 {
 	if (!isendwin())
-		endwin();
+		spy_endwin();
 
 	rl_display_match_list(matches, len, max);
 }
