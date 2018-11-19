@@ -40,6 +40,7 @@ static const char *s_shell = getenv("SHELL");
 static const char *s_home = getenv("HOME");
 static const char *s_editor = getenv("EDITOR");
 static const char *s_pager = getenv("PAGER");
+static const char *s_user = getenv("USER");
 
 // History
 static const std::string s_chistoryfile = std::string(s_home) + "/.spy_history";
@@ -306,7 +307,6 @@ static const int BUFSIZE = 1024;
 // File/directory state
 static std::vector<DIRINFO> thefiles;
 static char thecwd[FILENAME_MAX];
-static char theusername[BUFSIZE];
 static char thehostname[BUFSIZE];
 
 // Current file/page
@@ -486,7 +486,6 @@ static void rebuild()
 
 	// Set the hostname and username
 	gethostname(thehostname, BUFSIZE);
-	getlogin_r(theusername, BUFSIZE);
 
 	// Get the directory listing
 	if (!getcwd(thecwd, sizeof(thecwd)))
@@ -509,28 +508,26 @@ static void rebuild()
 
 	thefiles.clear();
 
-	struct dirent entry;
-	struct dirent *result;
-	readdir_r(dp, &entry, &result);
+	const struct dirent *result = readdir(dp);
 	while(result)
 	{
-		if (strcmp(entry.d_name, ".") &&
-			strcmp(entry.d_name, "..") &&
-			!ignored(entry.d_name))
+		if (strcmp(result->d_name, ".") &&
+			strcmp(result->d_name, "..") &&
+			!ignored(result->d_name))
 		{
 			thefiles.push_back(DIRINFO());
-			thefiles.back().setname(entry.d_name);
+			thefiles.back().setname(result->d_name);
 
-			if (entry.d_type == DT_DIR)
+			if (result->d_type == DT_DIR)
 			{
 				thefiles.back().setdirectory();
 			}
-			else if (entry.d_type == DT_UNKNOWN)
+			else if (result->d_type == DT_UNKNOWN)
 			{
 				thefiles.back().setdirectory_from_stat();
 			}
 		}
-		readdir_r(dp, &entry, &result);
+		result = readdir(dp);
 	}
 
 	if (thedebugmode)
@@ -794,7 +791,7 @@ static void draw(const SPY_REGEX *incsearch = 0)
 	attrset(A_NORMAL);
 
 	move(0, 0);
-	snprintf(title, BUFSIZE, "%s@%s: %s", theusername, thehostname, thecwd);
+	snprintf(title, BUFSIZE, "%s@%s: %s", s_user, thehostname, thecwd);
 	addnstr(title, COLS);
 
 	if (!themsg.empty())
