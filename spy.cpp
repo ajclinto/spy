@@ -2221,10 +2221,15 @@ static char *spy_rl_completion_matches(const char *str, int state)
 
 static void init_curses()
 {
+    // Disable the use of $LINES and $COLUMNS environment variables to
+    // determine screen size
+    use_env(FALSE);
+    use_tioctl(TRUE);
+
     // Using newterm() instead of initscr() is supposed to avoid stdout
     // buffering problems with child processes
-    newterm(getenv("TERM"), fopen("/dev/tty", "w"), fopen("/dev/tty", "r"));
-    //initscr();
+    SCREEN *screen = newterm(nullptr, fopen("/dev/tty", "w"), fopen("/dev/tty", "r"));
+    assert(screen);
 
     // This is required for the arrow and backspace keys to function
     // correctly
@@ -2259,6 +2264,9 @@ static void init_curses()
         // Inverted magenta for search coloring
         init_pair(8, COLOR_MAGENTA, -1);
     }
+
+    // Enable for debugging when linking with the ncurses_g library
+    //trace(TRACE_CALLS | TRACE_ICALLS);
 }
 
 static void load_history(const std::string &fname, HISTORY_STATE &state)

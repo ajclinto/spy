@@ -1,10 +1,7 @@
 CXX = g++
 
 CFLAGS = -O3 -std=c++0x
-LDFLAGS = -lncurses -lreadline -lrt
-
-# For -static (busted)
-#LDFLAGS += -lncurses -lreadline -ltinfo -lgpm
+LDFLAGS = -lncurses -lreadline
 
 all: spy
 	
@@ -29,8 +26,9 @@ clean:
 	rm -f *.o *.d spyrc_defaults.h spy
 
 # Custom built ncurses
-# ./configure --with-shared --without-normal --without-debug --enable-sigwinch
-# ./configure --enable-sigwinch
+# ./configure --with-default-terminfo-dir=/lib/terminfo --with-shared --without-normal --without-debug
+# ./configure --with-default-terminfo-dir=/lib/terminfo
 
-#CFLAGS = -Incurses/ncurses-5.9/include -g -std=c++0x
-#LDFLAGS = -Lncurses/ncurses-5.9/lib -lncurses_g -lreadline
+#CFLAGS = -Incurses/ncurses-6.1/include -g -std=c++0x
+#LDFLAGS = -Lncurses/ncurses-6.1/lib -static -lncurses_g -lreadline -ldl
+
