@@ -1,7 +1,7 @@
 CXX = g++
 
 CFLAGS = -O3 -std=c++0x
-LDFLAGS = -lncurses -lreadline
+LDFLAGS = -lncurses -ltinfo -lreadline -lrt
 
 all: spy
 	

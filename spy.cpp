@@ -130,6 +130,15 @@ static void signal_resize(int)
 {
     // Tell the main event loop that the terminal was resized
     theresized = true;
+
+    struct winsize w;
+    ioctl(0, TIOCGWINSZ, &w);
+
+    char buf[16];
+    sprintf(buf, "%d", w.ws_row);
+    setenv("LINES", buf, true);
+    sprintf(buf, "%d", w.ws_col);
+    setenv("COLUMNS", buf, true);
 }
 
 struct ci_equal {
@@ -298,7 +307,7 @@ private:
     }
 
     std::string myname;
-    mutable std::unique_ptr<struct stat> mystat;
+    mutable std::shared_ptr<struct stat> mystat;
     bool mydirectory;
 };
 
@@ -2223,12 +2232,14 @@ static void init_curses()
 {
     // Disable the use of $LINES and $COLUMNS environment variables to
     // determine screen size
-    use_env(FALSE);
-    use_tioctl(TRUE);
+    // NOTE: use_tioctl() isn't available in older versions of curses. Instead
+    // use setenv() to change $LINES and $COLUMNS in the SIGWINCH handler.
+    //use_env(FALSE);
+    //use_tioctl(TRUE);
 
     // Using newterm() instead of initscr() is supposed to avoid stdout
     // buffering problems with child processes
-    SCREEN *screen = newterm(nullptr, fopen("/dev/tty", "w"), fopen("/dev/tty", "r"));
+    SCREEN *screen = newterm(NULL, fopen("/dev/tty", "w"), fopen("/dev/tty", "r"));
     assert(screen);
 
     // This is required for the arrow and backspace keys to function
