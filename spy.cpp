@@ -486,6 +486,17 @@ static void find_and_set_curfile(const std::string &name)
     }
 }
 
+static void layout()
+{
+    layout(thefiles, LINES-3, COLS);
+
+    filetopage();
+
+    // Clear the screen for the next draw. This is for user-controlled redraw,
+    // which should clear any garbage left on the screen by background jobs.
+    clear();
+}
+
 static void rebuild()
 {
     TIMER    timer(false);
@@ -539,15 +550,12 @@ static void rebuild()
         result = readdir(dp);
     }
 
+    closedir(dp);
+
     if (thedebugmode)
         buildtime = timer.elapsed();
 
     std::sort(thefiles.begin(), thefiles.end());
-
-    if (thedebugmode)
-        sorttime = timer.elapsed();
-
-    layout(thefiles, LINES-3, COLS);
 
     // Restore the current file if possible. This allows reordering (eg.
     // toggling details or refreshing the directory) to preserve the
@@ -558,9 +566,10 @@ static void rebuild()
     if (thecurfile >= thefiles.size())
         thecurfile = thefiles.size() ? thefiles.size()-1 : 0;
 
-    filetopage();
+    if (thedebugmode)
+        sorttime = timer.elapsed();
 
-    closedir(dp);
+    layout();
 
     if (thedebugmode)
     {
@@ -836,15 +845,6 @@ static void draw(const SPY_REGEX *incsearch = 0)
         move(1, 0);
         printw("<empty>\n");
     }
-}
-
-static void redraw()
-{
-    rebuild();
-
-    // Clear the screen for the next draw. This is for user-controlled redraw,
-    // which should clear any garbage left on the screen by background jobs.
-    clear();
 }
 
 static void ignoretoggle(const char *label)
@@ -2340,7 +2340,7 @@ static CALLBACK thecallbacks[] = {
     CALLBACK("last_cmd", last_command, 0, false),
     CALLBACK("show_cmd", show_command, 0, false),
 
-    CALLBACK("redraw", redraw),
+    CALLBACK("redraw", rebuild),
 
     CALLBACK("loadrc", reload),
 
@@ -2414,7 +2414,7 @@ int main(int argc, char *argv[])
             ioctl(0, TIOCGWINSZ, &w);
             resize_term(w.ws_row, w.ws_col);
 
-            redraw();
+            layout();
             draw();
             refresh();
         }
