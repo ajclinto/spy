@@ -73,28 +73,28 @@ Spy may be customized using the .spyrc file (located in your home directory). A 
 
 Coloring files by type (colors: blue black red purple cyan white green yellow):
 
-color -dir yellow
-color -x green
-color -ro purple
-color core blue
-color -link cyan
+    color -dir yellow
+    color -x green
+    color -ro purple
+    color core blue
+    color -link cyan
 
 Single key shortcuts to navigate to a directory:
 
-map 1   jump    =~/projects/spy
+    map 1   jump    =~/projects/spy
 
 3-way toggle to sort by file size or modification date:
 
-map y   detailtoggle
+    map y   detailtoggle
 
 Single key shortcuts for commands that take a prompt:
 
-map c   prompt_interactive  qcd
-map b   prompt_interactive  rcd
+    map c   prompt_interactive  qcd
+    map b   prompt_interactive  rcd
 
 Relaxing case:
 
-relaxprompt
-relaxsearch
-relaxcase
+    relaxprompt
+    relaxsearch
+    relaxcase
 
