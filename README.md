@@ -3,6 +3,8 @@ spy
 
 A terminal directory browser with vim keybindings.
 
+Spy was originally developed by Side Effects Software (www.sidefx.com). This public domain source was re-written from scratch but uses the same general interface as the original.
+
 ## Building
 
 Spy depends on the following low-level Linux libraries so to build you should have headers installed for these packages:
