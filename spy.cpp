@@ -809,7 +809,8 @@ static void draw(const SPY_REGEX *incsearch = 0)
     attrset(A_NORMAL);
 
     move(0, 0);
-    snprintf(title, BUFSIZE, "%s@%s: %s", s_user, thehostname, thecwd);
+    int rval = snprintf(title, BUFSIZE, "%s@%s: %s", s_user, thehostname, thecwd);
+    assert(rval >= 0);
     addnstr(title, COLS);
 
     if (!themsg.empty())
@@ -1402,7 +1403,7 @@ static void continue_prompt(const char *status = 0)
     tputs(s_ce, 1, putchar);
 }
 
-static bool cancel_prompt()
+static void cancel_prompt()
 {
     if (!isendwin())
     {
@@ -2260,7 +2261,7 @@ static void init_curses()
     // faster than that while the window is being resized.
     timeout(1000);
 
-    ESCDELAY = 0;
+    set_escdelay(0);
 
     if (has_colors())
     {
